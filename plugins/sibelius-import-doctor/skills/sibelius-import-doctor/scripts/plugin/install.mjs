@@ -18,7 +18,7 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const PLUGIN_NAME = "SibeliusImportDoctor"; // file name without extension = name used over Connect
-export const PLUGIN_VERSION = "0.1.0"; // must match Ping in the .plg source
+export const PLUGIN_VERSION = "0.2.0"; // must match Ping in the .plg source
 const CATEGORY = "Import Doctor"; // folder name = Plug-ins menu category
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SOURCE = path.join(HERE, `${PLUGIN_NAME}.plg.txt`);

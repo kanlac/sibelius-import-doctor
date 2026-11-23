@@ -38,7 +38,7 @@ This is step 3 of SKILL.md. `scripts/connect.mjs` opens the user's original and 
    | `error` | `code`, `message`, `hint`; exit code 1 |
 
    Each waiting event carries a `say` sentence you can pass on.
-8. The `done` line has the `.sib` path, the JSON details path (`<fixed name>.sibelius-check.json`), note totals for the original and the fixed import (`xmlNotes`, `sibeliusNotes`, `lost`, `gained`, and `movedBetweenStaves`, which is informational), `differsFromOriginalBars`, and `comments`: how many bars got a comment, how many were only changed and need nothing from the user (`changedNothingToDo`), how many need the user's eyes (`needYourEyes`: could not be fixed, still differs from their file, or Sibelius shows something different), how many harmless rest-only changes were left uncommented, plus the first bars needing eyes with part name and bar number. Lead with that in plain words.
+8. The `done` line has the `.sib` path, the JSON details path (`<fixed name>.sibelius-check.json`), note totals for the original and the fixed import (`xmlNotes`, `sibeliusNotes`, `lost`, `gained`, and `movedBetweenStaves`, which is informational), `differsFromOriginalBars`, and `comments`: how many bars got a comment, how many per level (`byLevel`), how many were only changed and need nothing from the user (`changedNothingToDo`, level 1), how many need the user's eyes (`needYourEyes`, levels 2 and 3), how many harmless rest-only changes were left uncommented, plus the first bars needing eyes (most serious first) with part name, bar number and level. Lead with that in plain words.
 
 ## The connection box (approval)
 
@@ -63,20 +63,29 @@ Human clicks per run: user-clicks = 1 approval + 1 OK per imported file (3 with 
 
 Comments go only where the music changed (notes or tremolos), where something could not be fixed, or where Sibelius shows something different from the user's file. Harmless rest-only normalisations (a whole-bar rest set to the length of the bar, rests added so a part fills its bar) are counted but never commented; without that, a 38-bar orchestral score got 299 comments, 253 of them about rest lengths.
 
-One comment per staff and bar, starting with "Import Doctor:", with every reason for that bar merged into one text, in this order:
+One comment per staff and bar, signed "Doctor", graded, and as short as it can be while saying what and how much:
 
-- `Changed: 2 notes past the bar line were removed.` (from `--changes`; nothing for the user to do)
-- `Could not be fixed: an unmeasured tremolo was left as it is; Sibelius may drop it.` (from `--changes`)
-- `Still differs from your file: 1 note missing (your file has 9, Sibelius shows 8).` (the fixed import compared with the original MusicXML; only when both have the same staves and bars)
-- `Sibelius shows this differently from the fixed file: ...` followed by one of: notes missing or extra, tremolos missing, notes the file puts in a tuplet shown as plain notes (the rhythm is off, usually with a longer bar), a two-note tremolo inside a tuplet (drawn as double whole notes), notes in a voice running past the bar line, or a bar whose length in Sibelius differs from the music in the file.
+| level | meaning | colour | shown | example |
+|---|---|---|---|---|
+| 1 | changed, nothing to do | grey-green | minimised | `Doctor 1: two-note tremolo rewritten: so Sibelius draws it correctly` |
+| 2 | please check | amber | open | `Doctor 2: tuplet lost (1 note), bar lasts 4.17 quarters (file 4): plain notes in Sibelius, rhythm off` |
+| 3 | serious: music lost or added that the doctor could not fix | red | open | `Doctor 3: 1 note missing (file 4, Sibelius 3): lost on import` |
 
-A bar whose comment has only "Changed" needs nothing from the user; any of the other three means it needs their eyes.
+- The comment takes the highest level of its findings; findings are listed highest first, separated by "; ".
+- Level 3: notes missing or extra in Sibelius compared with the fixed file, and problems the doctor could not fix that make Sibelius cut music (an overlong bar). Level 2: still differs from the user's original file (for example notes the doctor removed past a bar line), a tuplet lost, a bar of the wrong length, tremolos lost, a two-note tremolo inside a tuplet, a voice running past the bar line, and other problems the doctor left as they were. Level 1: changes the doctor made to notes or tremolos.
+- "file" in a count means the fixed file Sibelius imported; "your file" means the user's original. When both counts say the same thing, only the first is kept. "all staves of the part" marks a count over a multi-staff part.
+- Inside a part, the first finding of a kind carries its explanation after a colon; later ones of the same kind only say `same: <short form>`.
+- The full wording, levels and every finding are in the details JSON (`comments`, `problems`); the comment carries none of the machine details.
+
+### Colour and author: what the plug-in uses
+
+The ManuScript Language Guide for 26.11 documents `Bar.AddCommentWithName(sr, text, username[, color[, maximized]])`: a per-comment user name, an optional colour and whether the comment opens maximised. The plug-in calls it with the name "Doctor", so the comments do not show the user's own name and no Sibelius preference is touched. The guide does not spell out the colour format for comments; the plug-in passes the 24-bit RGB value ManuScript uses for object colours (red × 65536 + green × 256 + blue). Avid's online Reference Guide could not be reached to check how comment colours look in the Review tab, so if Sibelius ignores the colour, the level marker in the text still carries the grade.
 
 At most 300 comments are added; the JSON details list every bar.
 
 ### The `--changes` file
 
-Normally pass the doctor's own `<name>.report.json`: entries of its change log that touch notes or tremolos (notes past the bar line removed or shortened, tremolos rewritten) become "Changed:", and every problem it reports as not fixed becomes "Could not be fixed:" on each bar it lists. Its rest-only fixes (`measure-rest`, `pad`, `pad-empty-measure`) and an unfixed overlong rest are classified as harmless in connect.mjs and get no comment. Score-wide changes (short part names, composer) have no bar and get no comment either.
+Normally pass the doctor's own `<name>.report.json`: entries of its change log that touch notes or tremolos (notes past the bar line removed or shortened, tremolos rewritten) become level-1 findings, and every problem it reports as not fixed becomes a level-2 or level-3 finding on each bar it lists. Its rest-only fixes (`measure-rest`, `pad`, `pad-empty-measure`) and an unfixed overlong rest are classified as harmless in connect.mjs and get no comment. Score-wide changes (short part names, composer) have no bar and get no comment either.
 
 Any other tool can pass a plain list instead:
 
@@ -87,7 +96,7 @@ Any other tool can pass a plain list instead:
 }
 ```
 
-`part` is the MusicXML part id (a part name also works), `measure` the measure number as printed in the file, or `measureIndex` (1-based position in the part) instead, `staff` the staff inside the part (default 1), `text` a short plain-words description that reads well after "Changed:" or "Could not be fixed:", `harmless: true` for a change that leaves notes and tremolos alone (counted, not commented). Entries that cannot be placed are listed under `doctorChanges.unplaced` in the details and counted in `doctorEntriesNotPlaced`.
+`part` is the MusicXML part id (a part name also works), `measure` the measure number as printed in the file, or `measureIndex` (1-based position in the part) instead, `staff` the staff inside the part (default 1), `text` a short plain-words description (it becomes the short form in the comment), `level` (1–3) optionally for an `unfixed` entry (default 2), `harmless: true` for a change that leaves notes and tremolos alone (counted, not commented). Entries that cannot be placed are listed under `doctorChanges.unplaced` in the details and counted in `doctorEntriesNotPlaced`.
 
 ### How bars are compared
 
@@ -126,7 +135,7 @@ Set `SIBELIUS_IMPORT_DOCTOR_DEBUG=1` to log every Connect frame to stderr.
 - macOS: `~/Library/Application Support/Avid/Sibelius/Plugins/Import Doctor/SibeliusImportDoctor.plg`
 - Windows (untested): `%APPDATA%\Avid\Sibelius\Plugins\Import Doctor\SibeliusImportDoctor.plg`
 
-`--check` reports without writing, `--remove` uninstalls. It appears in Sibelius under the Plug-ins menu as "Sibelius Import Doctor" and does nothing when run by hand. It only reads the score, adds comments, saves a `.sib` copy and closes the scores this check opened: there is deliberately no method that edits notes, because the connection box grants the client whatever the plug-in can do. Its version (`Ping`) must match `PLUGIN_VERSION` in `install.mjs`; bump both together, and remember the user has to restart Sibelius after every plug-in change.
+`--check` reports without writing, `--remove` uninstalls. It appears in Sibelius under the Plug-ins menu as "Sibelius Import Doctor" and does nothing when run by hand. It only reads the score, adds comments (author "Doctor", colour and open or minimised per level), saves a `.sib` copy and closes the scores this check opened: there is deliberately no method that edits notes, because the connection box grants the client whatever the plug-in can do. Its version (`Ping`) must match `PLUGIN_VERSION` in `install.mjs`; bump both together, and remember the user has to restart Sibelius after every plug-in change.
 
 ## Learned the hard way
 

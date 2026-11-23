@@ -9,7 +9,7 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const SCRIPTS = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "plugins", "sibelius-import-doctor", "skills", "sibelius-import-doctor", "scripts");
-const { parseXml, loadScore, analyseScore, compare, compareToOriginal, loadChanges, locate, buildComments } = await import(path.join(SCRIPTS, "connect.mjs"));
+const { parseXml, loadScore, analyseScore, compare, compareToOriginal, loadChanges, locate, buildComments, doctorItems, LEVEL_COLOR } = await import(path.join(SCRIPTS, "connect.mjs"));
 
 const SCORE = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
@@ -107,7 +107,7 @@ test("missing notes, lost tremolos, tuplet tremolos, overflow and bar length are
   assert.equal(c.lost, 1);
 });
 
-test("comments cover changed, unfixed, differing and mis-imported bars", () => {
+test("comments are graded, short, and drop a count that repeats the import finding", () => {
   const a = analyseScore(loadScore(tmpFile("s.musicxml", SCORE)));
   const changesFile = tmpFile("c.json", JSON.stringify({
     changed: [{ part: "P1", measure: "1", text: "two-note tremolo rewritten" }],
@@ -116,21 +116,34 @@ test("comments cover changed, unfixed, differing and mis-imported bars", () => {
   const ch = loadChanges(changesFile);
   assert.deepEqual(locate(a, ch.changed[0]), { staff: 1, bar: 2, measure: "1", part: "Flute & Piccolo" });
   assert.equal(locate(a, ch.unfixed[1]), null);
+  const unplaced = [];
   const rows = PERFECT.filter((r) => r[0] !== 3);
   const c = compare(a, INFO, rows, LENGTHS);
   const vs = compareToOriginal(a, c.cells, LENGTHS.length);
   const items = [
-    { ...locate(a, ch.changed[0]), source: "changed", text: ch.changed[0].text },
-    { ...locate(a, ch.unfixed[0]), source: "unfixed", text: ch.unfixed[0].text },
+    ...doctorItems(ch, a, unplaced),
     ...vs.bars.map((p) => ({ ...p, source: "differs-from-original" })),
     ...c.problems.map((p) => ({ ...p, source: "import" })),
   ];
+  assert.equal(unplaced.length, 1);
   const comments = buildComments(items);
   assert.equal(comments.length, 2);
-  assert.equal(comments[0].text, "Import Doctor: Changed: two-note tremolo rewritten.");
-  assert.equal(comments[0].needsEyes, false);
-  assert.equal(comments[1].needsEyes, true);
-  assert.equal(comments[1].text, "Import Doctor: Could not be fixed: voice 5 could not be shortened. Still differs from your file: 1 note missing (your file has 3 across the part's staves, Sibelius shows 2). Sibelius shows this differently from the fixed file: the file has 3 notes in this bar across the part's staves, Sibelius shows 2.");
+  assert.equal(comments[0].text, "Doctor 1: two-note tremolo rewritten");
+  assert.equal(comments[0].level, 1);
+  assert.equal(comments[0].color, LEVEL_COLOR[1]);
+  assert.equal(comments[1].level, 3);
+  assert.equal(comments[1].staff, 3);
+  assert.equal(comments[1].text, "Doctor 3: 1 note missing (file 3, Sibelius 2, all staves of the part): lost on import; voice 5 could not be shortened");
+});
+
+test("a repeated kind in the same part is only named the second time", () => {
+  const item = (bar) => ({ staff: 1, bar, measure: String(bar), part: "Violin", source: "import", kind: "tuplet-lost", short: "tuplet lost (1 note)", explain: "the rhythm is off" });
+  const comments = buildComments([item(3), item(7), { ...item(9), part: "Viola" }]);
+  assert.deepEqual(comments.map((g) => g.text), [
+    "Doctor 2: tuplet lost (1 note): the rhythm is off",
+    "Doctor 2: same: tuplet lost (1 note)",
+    "Doctor 2: tuplet lost (1 note): the rhythm is off",
+  ]);
 });
 
 test("a note Sibelius puts on the other staff of the same part is not a loss", () => {
@@ -193,7 +206,7 @@ test("a triplet note shown as a plain eighth is reported once, with the longer b
   rows[11][6] = 0; rows[11][7] = 0; // the last note lost its tuplet: 128 ticks instead of 85.33
   const c = compare(a, { ok: true, staffCount: 1 }, rows, [1067]);
   assert.deepEqual(c.problems.map((p) => p.kind), ["tuplet-lost"]);
-  assert.match(c.problems[0].text, /^1 note that the file puts in a tuplet .* is a plain note in Sibelius, so the rhythm is off and the bar lasts 4\.17 quarter notes in Sibelius, but the music in the file lasts 4$/);
+  assert.equal(c.problems[0].short, "tuplet lost (1 note), bar lasts 4.17 quarters (file 4)");
   assert.ok(c.evidence[1].rows.length === 12);
 });
 
@@ -225,12 +238,12 @@ test("the doctor's report.json: harmless rest changes get no comment, note and t
   assert.equal(ch.harmless, 2);
   assert.equal(ch.changed.length, 2);
   assert.equal(ch.unfixed.length, 1);
-  const items = [...ch.changed, ...ch.unfixed].map((e, i) => ({ ...locate(a, e), source: i < ch.changed.length ? "changed" : "unfixed", text: e.text }));
-  const comments = buildComments(items);
+  const comments = buildComments(doctorItems(ch, a));
   assert.equal(comments.length, 2);
-  assert.equal(comments[0].text, "Import Doctor: Changed: two-note tremolo rewritten so Sibelius draws it correctly; 2 notes past the bar line were removed.");
+  assert.equal(comments[0].text, "Doctor 1: two-note tremolo rewritten: so Sibelius draws it correctly; 2 notes past the bar line removed: Sibelius would have dropped them");
   assert.equal(comments[1].staff, 2);
-  assert.match(comments[1].text, /^Import Doctor: Could not be fixed: an unmeasured tremolo/);
+  assert.equal(comments[1].level, 2);
+  assert.match(comments[1].text, /^Doctor 2: unmeasured tremolo left as is: Sibelius may drop it$/);
 });
 
 test(".mxl archives are read through META-INF/container.xml", () => {

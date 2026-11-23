@@ -304,6 +304,14 @@ const quarters = (ticks) => {
 
 function plural(n, word) { return `${n} ${word}${n === 1 ? "" : "s"}`; }
 
+// Every finding carries a short form (what and how much, for the comment), an explanation (said once
+// per part and kind in the comments) and the full text for the details JSON.
+function finding(at, kind, short, explain) {
+  return { ...at, kind, short, explain, text: explain ? `${short}: ${explain}` : short };
+}
+
+const counts = (file, sib, whole, fileWord = "file") => `(${fileWord} ${file}, Sibelius ${sib}${whole ? ", all staves of the part" : ""})`;
+
 // Notes and tremolos are compared per part and bar, summed over the part's staves: Sibelius may put a
 // note on another staff of the same part than the file's <staff> says (cross-staff notation in piano,
 // harp or accordion parts), which is not a loss. Such moves are only counted (movedBetweenStaves).
@@ -336,8 +344,8 @@ function tupletRounding(cells, nStaves, b) {
   return Math.ceil(groups - 1e-9);
 }
 
-function barLengthText(sib, intended) {
-  return `this bar lasts ${quarters(sib)} quarter notes in Sibelius, but the music in the file lasts ${quarters(intended)}`;
+function barLengthShort(sib, intended) {
+  return `bar lasts ${quarters(sib)} quarters (file ${quarters(intended)})`;
 }
 
 // Compare one imported file with its MusicXML. Returns totals and a list of bars that look wrong.
@@ -364,26 +372,26 @@ export function compare(xml, info, rows, barLengths) {
       const short = diffs.reduce((a, x) => a + Math.max(0, -x.d), 0), extra = diffs.reduce((a, x) => a + Math.max(0, x.d), 0);
       moved += Math.min(short, extra);
       const at = (sign) => ({ staff: pickStaff(diffs, sign), bar: b, measure: label, part: part.name });
-      const here = part.staves.length > 1 ? "in this bar across the part's staves" : "here";
-      if (got.heads < want.heads) { lost += want.heads - got.heads; problems.push({ ...at(-1), kind: "notes-missing", text: `the file has ${plural(want.heads, "note")} ${here}, Sibelius shows ${got.heads}` }); }
-      if (got.heads > want.heads) { gained += got.heads - want.heads; problems.push({ ...at(1), kind: "notes-extra", text: `the file has ${plural(want.heads, "note")} ${here}, Sibelius shows ${got.heads}` }); }
-      if (got.single < want.single) problems.push({ ...at(-1), kind: "tremolo-missing", text: `${plural(want.single - got.single, "tremolo")} from the file ${want.single - got.single === 1 ? "is" : "are"} missing` });
-      if (got.double < want.double) problems.push({ ...at(-1), kind: "two-note-tremolo-missing", text: `${plural(want.double - got.double, "two-note tremolo")} from the file ${want.double - got.double === 1 ? "is" : "are"} missing` });
+      const whole = part.staves.length > 1;
+      if (got.heads < want.heads) { const n = want.heads - got.heads; lost += n; problems.push({ ...finding(at(-1), "notes-missing", `${plural(n, "note")} missing ${counts(want.heads, got.heads, whole)}`, "lost on import"), file: want.heads, sib: got.heads }); }
+      if (got.heads > want.heads) { const n = got.heads - want.heads; gained += n; problems.push({ ...finding(at(1), "notes-extra", `${plural(n, "extra note")} ${counts(want.heads, got.heads, whole)}`, "added on import"), file: want.heads, sib: got.heads }); }
+      if (got.single < want.single) problems.push(finding(at(-1), "tremolo-missing", `${plural(want.single - got.single, "tremolo")} missing`, "lost on import"));
+      if (got.double < want.double) problems.push(finding(at(-1), "two-note-tremolo-missing", `${plural(want.double - got.double, "two-note tremolo")} missing`, "lost on import"));
       if (got.tuplets < (want.tuplets || 0)) {
         const n = want.tuplets - got.tuplets;
-        let text = `${plural(n, "note")} that the file puts in a tuplet (such as a triplet) ${n === 1 ? "is a plain note" : "are plain notes"} in Sibelius, so the rhythm is off`;
-        if (lengthOff && !lengthExplained) { text += ` and ${barLengthText(sibLen, bar.intended).replace("this bar lasts", "the bar lasts")}`; lengthExplained = true; }
+        let short = `tuplet lost (${plural(n, "note")})`;
+        if (lengthOff && !lengthExplained) { short += `, ${barLengthShort(sibLen, bar.intended)}`; lengthExplained = true; }
         const tupStaff = got.per.reduce((best, x) => (x.c.tuplets < best.c.tuplets ? x : best), got.per[0]).s;
-        problems.push({ staff: tupStaff, bar: b, measure: label, part: part.name, kind: "tuplet-lost", text });
+        problems.push(finding({ staff: tupStaff, bar: b, measure: label, part: part.name }, "tuplet-lost", short, "plain notes in Sibelius, rhythm off"));
       }
       for (const { s, c } of got.per) {
         const cell = { staff: s, bar: b, measure: label, part: part.name };
-        if (c.doubleInTuplet > 0) problems.push({ ...cell, kind: "two-note-tremolo-in-tuplet", text: "a two-note tremolo here sits inside a tuplet, so it may be drawn as double whole notes" });
+        if (c.doubleInTuplet > 0) problems.push(finding(cell, "two-note-tremolo-in-tuplet", "two-note tremolo inside a tuplet", "may show as double whole notes"));
         const voices = overflow.get(`${s}:${b}`);
-        if (voices) problems.push({ ...cell, kind: "voice-overflow", text: `notes in voice ${voices.join(" and ")} run past the end of the bar` });
+        if (voices) problems.push(finding(cell, "voice-overflow", `voice ${voices.join(" and ")} runs past the bar line`, "too many beats"));
       }
     }
-    if (lengthOff && !lengthExplained) problems.push({ staff: 1, bar: b, measure: label, kind: "bar-length", text: barLengthText(sibLen, bar.intended) });
+    if (lengthOff && !lengthExplained) problems.push(finding({ staff: 1, bar: b, measure: label, part: xml.parts[0]?.name }, "bar-length", barLengthShort(sibLen, bar.intended), "check the rhythm"));
   }
   // What Sibelius holds in bars with a length or tuplet problem, kept in the details for diagnosis.
   const flagged = new Set(problems.filter((p) => p.kind === "bar-length" || p.kind === "tuplet-lost").map((p) => p.bar));
@@ -406,7 +414,8 @@ export function compareToOriginal(orig, cells, nSibBars) {
       if (got.heads === want.heads) return;
       const diff = want.heads - got.heads;
       const staff = pickStaff(staffDiffs(orig, part, got.per, j + 1), diff > 0 ? -1 : 1);
-      out.push({ staff, bar: j + 1, measure: orig.bars[j].number, part: part.name, kind: "differs-from-original", text: `${plural(Math.abs(diff), "note")} ${diff > 0 ? "missing" : "more"} (your file has ${want.heads}${part.staves.length > 1 ? " across the part's staves" : ""}, Sibelius shows ${got.heads})` });
+      const short = `${plural(Math.abs(diff), "note")} ${diff > 0 ? "missing" : "more"} ${counts(want.heads, got.heads, part.staves.length > 1, "your file")}`;
+      out.push({ ...finding({ staff, bar: j + 1, measure: orig.bars[j].number, part: part.name }, "differs-from-original", short, "compare this bar with your file"), file: want.heads, sib: got.heads });
     });
   }
   return { compared: true, bars: out };
@@ -424,18 +433,18 @@ export function compareToOriginal(orig, cells, nSibBars) {
 // bar length, rests added to fill a bar) are harmless: counted, never commented.
 const HARMLESS_FIXES = new Set(["measure-rest", "pad", "pad-empty-measure"]);
 const HARMLESS_UNFIXED = new Set(["overlong-rest"]);
+// Short form and one-time explanation of each doctor change and each problem it could not fix.
 const FIX_TEXT = {
-  "trim-delete": "notes past the bar line were removed",
-  "trim-shorten": "a note crossing the bar line was shortened to end at it",
-  "tremolo-pair": "two-note tremolo rewritten so Sibelius draws it correctly",
-  unmeasured: "unmeasured tremolo rewritten as a three-stroke tremolo",
+  "trim-delete": ["note past the bar line removed", "Sibelius would have dropped it"],
+  "trim-shorten": ["note shortened to end at the bar line", "it crossed the bar line"],
+  "tremolo-pair": ["two-note tremolo rewritten", "so Sibelius draws it correctly"],
+  unmeasured: ["unmeasured tremolo rewritten as three strokes", "Sibelius would have dropped it"],
 };
 const UNFIXED_TEXT = {
-  "overlong-bar": "the music in this bar is longer than the time signature",
-  "overlong-rest": "the whole-bar rest is longer than the bar",
-  "two-note-tremolo": "a two-note tremolo is still written in a way Sibelius draws wrongly",
-  "two-note-tremolo-unusual": "an unusual two-note tremolo was left as it is; check how Sibelius draws it",
-  "unmeasured-tremolo": "an unmeasured tremolo was left as it is; Sibelius may drop it",
+  "overlong-bar": ["music longer than the bar", "not fixed; Sibelius may cut the end", 3],
+  "two-note-tremolo": ["two-note tremolo not fixed", "Sibelius may draw it as double whole notes", 2],
+  "two-note-tremolo-unusual": ["unusual two-note tremolo left as is", "check how Sibelius draws it", 2],
+  "unmeasured-tremolo": ["unmeasured tremolo left as is", "Sibelius may drop it", 2],
 };
 
 function fromDoctorReport(raw) {
@@ -444,15 +453,15 @@ function fromDoctorReport(raw) {
   for (const c of raw.log) {
     if (HARMLESS_FIXES.has(c.fix)) { harmless += 1; continue; }
     if (!FIX_TEXT[c.fix] || !c.measure) continue;
-    const n = c.deleted_noteheads;
-    const text = c.fix === "trim-delete" && n ? `${plural(n, "note")} past the bar line ${n === 1 ? "was" : "were"} removed` : FIX_TEXT[c.fix];
-    changed.push({ part: c.part, measureIndex: c.measure, staff: Number(c.staff) || 1, text });
+    let [short, explain] = FIX_TEXT[c.fix];
+    if (c.fix === "trim-delete" && c.deleted_noteheads > 1) { short = `${c.deleted_noteheads} notes past the bar line removed`; explain = "Sibelius would have dropped them"; }
+    changed.push({ part: c.part, measureIndex: c.measure, staff: Number(c.staff) || 1, kind: c.fix, short, explain, text: `${short}: ${explain}` });
   }
   const unfixed = [];
   for (const p of raw.found || []) {
     if (p.fixed || !p.where || HARMLESS_UNFIXED.has(p.kind)) continue;
-    const text = UNFIXED_TEXT[p.kind] || `${String(p.kind).replace(/-/g, " ")} (not fixed)`;
-    for (const w of p.where) for (const bar of w.bars || []) unfixed.push({ part: w.part_id ?? w.part, measure: bar, staff: 1, text });
+    const [short, explain, level] = UNFIXED_TEXT[p.kind] || [`${String(p.kind).replace(/-/g, " ")} not fixed`, "", 2];
+    for (const w of p.where) for (const bar of w.bars || []) unfixed.push({ part: w.part_id ?? w.part, measure: bar, staff: 1, kind: p.kind, short, explain, level, text: explain ? `${short}: ${explain}` : short });
   }
   return { changed, unfixed, harmless };
 }
@@ -470,6 +479,7 @@ export function loadChanges(file) {
     measureIndex: e.measureIndex ?? e.index ?? null,
     staff: Number(e.staff ?? 1) || 1,
     text: String(e.text ?? e.summary ?? e.description ?? e.what ?? "").trim(),
+    level: [1, 2, 3].includes(e.level) ? e.level : undefined,
   });
   const keep = (list) => list.filter((e) => !e.harmless).map(norm);
   return { changed: keep(pick(LIST_KEYS.changed)), unfixed: keep(pick(LIST_KEYS.unfixed)), harmless: all.filter((e) => e.harmless).length };
@@ -482,32 +492,70 @@ export function locate(xml, e) {
   return { staff: staffIdx + 1, bar, measure: xml.bars[bar - 1].number, part: xml.staves[staffIdx].name };
 }
 
-// Sources in the order they are told, with the lead-in each gets in the comment.
-const SECTION = [
-  ["changed", "Changed"],
-  ["unfixed", "Could not be fixed"],
-  ["differs-from-original", "Still differs from your file"],
-  ["import", "Sibelius shows this differently from the fixed file"],
-];
-export const NEEDS_EYES = new Set(["unfixed", "differs-from-original", "import"]);
+// Severity of each finding: 1 = changed, nothing to do; 2 = please check; 3 = serious (music lost or
+// added that the doctor could not fix). A comment takes the highest level of its findings.
+const LEVEL = {
+  changed: 1,
+  unfixed: 2,
+  "differs-from-original": 2,
+  "notes-missing": 3,
+  "notes-extra": 3,
+  "tremolo-missing": 2,
+  "two-note-tremolo-missing": 2,
+  "two-note-tremolo-in-tuplet": 2,
+  "voice-overflow": 2,
+  "tuplet-lost": 2,
+  "bar-length": 2,
+};
+export function levelOf(it) {
+  if (it.source === "changed") return 1;
+  if (it.source === "unfixed") return it.level || LEVEL.unfixed;
+  return LEVEL[it.kind] || 2;
+}
 
-// One comment per staff and bar, all reasons merged into one plain-words text.
+// Comment background colours per level, as 24-bit RGB (red * 65536 + green * 256 + blue), the format
+// ManuScript uses for colours: grey-green, amber, red.
+export const LEVEL_COLOR = { 1: 0xc8dcc8, 2: 0xffc864, 3: 0xff7a7a };
+
+// One comment per staff and bar, shortest wording first. Inside a part, the first finding of a kind
+// gets its explanation; later ones of the same kind say "same: ..." with only the short form.
+// Level 1 comments are created minimised so they stay out of the way.
 export function buildComments(items) {
   const byCell = new Map();
   for (const it of items) {
     const key = `${it.staff}:${it.bar}`;
-    const g = byCell.get(key) || { staff: it.staff, bar: it.bar, measure: it.measure, part: it.part, texts: new Map() };
-    const list = g.texts.get(it.source) || [];
-    if (!list.includes(it.text)) list.push(it.text);
-    g.texts.set(it.source, list);
+    const g = byCell.get(key) || { staff: it.staff, bar: it.bar, measure: it.measure, part: it.part, findings: new Map() };
+    const fk = `${it.source}|${it.kind || ""}|${it.short || it.text}`;
+    const f = g.findings.get(fk) || { ...it, source: it.source || "import", short: it.short || it.text, count: 0, level: levelOf(it) };
+    f.count += it.count || 1;
+    g.findings.set(fk, f);
     byCell.set(key, g);
   }
+  const seen = new Set();
   return [...byCell.values()]
     .sort((a, b) => a.bar - b.bar || a.staff - b.staff)
     .map((g) => {
-      const sources = SECTION.map(([src]) => src).filter((src) => g.texts.has(src));
-      const body = SECTION.filter(([src]) => g.texts.has(src)).map(([src, lead]) => `${lead}: ${g.texts.get(src).join("; ")}.`).join(" ");
-      return { staff: g.staff, bar: g.bar, measure: g.measure, part: g.part, sources, needsEyes: sources.some((src) => NEEDS_EYES.has(src)), text: `Import Doctor: ${body}` };
+      // A note count against the user's file that says the same as the import finding is dropped.
+      const all = [...g.findings.values()];
+      const importCounts = all.filter((f) => f.kind === "notes-missing" || f.kind === "notes-extra");
+      const findings = all
+        .filter((f) => !(f.kind === "differs-from-original" && importCounts.some((x) => x.file === f.file && x.sib === f.sib)))
+        .sort((a, b) => b.level - a.level);
+      const level = Math.max(...findings.map((f) => f.level));
+      const parts = findings.map((f) => {
+        const short = f.count > 1 && !/^\d/.test(f.short) ? `${f.count} × ${f.short}` : f.short;
+        const kindKey = `${g.part}|${f.source}|${f.kind || f.short}`;
+        if (seen.has(kindKey)) return `same: ${short}`;
+        seen.add(kindKey);
+        return f.explain ? `${short}: ${f.explain}` : short;
+      });
+      return {
+        staff: g.staff, bar: g.bar, measure: g.measure, part: g.part, level,
+        needsEyes: level >= 2,
+        kinds: findings.map((f) => f.kind || f.source),
+        color: LEVEL_COLOR[level],
+        text: `Doctor ${level}: ${parts.join("; ")}`,
+      };
     });
 }
 
@@ -809,12 +857,12 @@ async function importAndRead(sess, file, mode, timings) {
   return read;
 }
 
-function doctorItems(changes, xml, unplaced) {
+export function doctorItems(changes, xml, unplaced = []) {
   const items = [];
   for (const source of ["changed", "unfixed"]) {
     for (const e of changes ? changes[source] : []) {
       const at = e.text ? locate(xml, e) : null;
-      if (at) items.push({ ...at, source, text: e.text });
+      if (at) items.push({ ...at, source, kind: e.kind, short: e.short || e.text, explain: e.explain, count: e.count, level: e.level, text: e.text });
       else unplaced.push({ source, ...e });
     }
   }
@@ -860,7 +908,7 @@ async function check(opts) {
       ...c.problems.map((p) => ({ ...p, source: "import" })),
     ];
     const comments = buildComments(items);
-    for (const g of comments.slice(0, MAX_COMMENTS)) await sess.plugin("Comment", [g.staff, g.bar, g.text]);
+    for (const g of comments.slice(0, MAX_COMMENTS)) await sess.plugin("Comment", [g.staff, g.bar, g.text, g.color, g.level >= 2]);
     const sib = path.join(outDir, `${stem}.checked.sib`);
     await sess.plugin("SaveSib", [sib]);
     if (opts.close) await sess.plugin("CloseScore", [f.info.staffCount, f.info.title ?? ""]);
@@ -882,12 +930,13 @@ async function check(opts) {
       comments: {
         added: Math.min(comments.length, MAX_COMMENTS),
         bars: comments.length,
+        byLevel: { 1: comments.filter((g) => g.level === 1).length, 2: comments.filter((g) => g.level === 2).length, 3: comments.filter((g) => g.level === 3).length },
         changedNothingToDo: comments.length - needsEyes.length,
         needYourEyes: needsEyes.length,
         harmlessChangesNotCommented: changes ? changes.harmless : 0,
         doctorEntriesNotPlaced: unplaced.length,
       },
-      firstNeedingEyes: needsEyes.slice(0, 20).map((g) => ({ part: g.part ?? null, measure: g.measure, text: g.text })),
+      firstNeedingEyes: [...needsEyes].sort((a, b) => b.level - a.level || a.bar - b.bar).slice(0, 20).map((g) => ({ part: g.part ?? null, measure: g.measure, level: g.level, text: g.text })),
     };
   } finally {
     sess.close();
