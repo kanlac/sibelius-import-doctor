@@ -570,11 +570,34 @@ export const LEVEL_COLOR = { 1: 0xc8dcc8, 2: 0xffc864, 3: 0xff7a7a };
 // One comment per staff and bar, shortest wording first. Inside a part, the first finding of a kind
 // gets its explanation; later ones of the same kind say "same: ..." with only the short form.
 // Level 1 comments are created minimised so they stay out of the way.
+// The same finding (same kind and wording) in the same bar in several parts becomes one finding on
+// the topmost of those staves, naming how many parts and the first few of them.
+const NAMES_SHOWN = 3;
+
+export function aggregateAcrossParts(items) {
+  const groups = new Map();
+  const out = [];
+  for (const it of items) {
+    const key = `${it.bar}|${it.source || "import"}|${it.kind || ""}|${it.short || it.text}`;
+    const g = groups.get(key);
+    if (g) g.push(it);
+    else { const list = [it]; groups.set(key, list); out.push(list); }
+  }
+  return out.map((list) => {
+    const parts = [...new Set(list.map((it) => it.part ?? ""))];
+    if (parts.length < 2) return list;
+    const top = list.reduce((a, b) => (b.staff < a.staff ? b : a));
+    const shown = parts.slice(0, NAMES_SHOWN).join(", ") + (parts.length > NAMES_SHOWN ? `, +${parts.length - NAMES_SHOWN} more` : "");
+    return [{ ...top, part: "*", parts, short: `${top.short || top.text} in ${parts.length} parts (${shown})`, sameKey: `${top.source}|${top.kind || top.short}|parts` }];
+  }).flat();
+}
+
 export function buildComments(items) {
   const byCell = new Map();
-  for (const it of items) {
+  for (const it of aggregateAcrossParts(items)) {
     const key = `${it.staff}:${it.bar}`;
-    const g = byCell.get(key) || { staff: it.staff, bar: it.bar, measure: it.measure, part: it.part, findings: new Map() };
+    const g = byCell.get(key) || { staff: it.staff, bar: it.bar, measure: it.measure, part: it.part, parts: new Set(), findings: new Map() };
+    for (const name of it.parts || [it.part]) if (name && name !== "*") g.parts.add(name);
     const fk = `${it.source}|${it.kind || ""}|${it.short || it.text}`;
     const f = g.findings.get(fk) || { ...it, source: it.source || "import", short: it.short || it.text, count: 0, level: levelOf(it) };
     f.count += it.count || 1;
@@ -596,13 +619,13 @@ export function buildComments(items) {
       const level = Math.max(...findings.map((f) => f.level));
       const parts = findings.map((f) => {
         const short = f.count > 1 && !/^\d/.test(f.short) ? `${f.count} × ${f.short}` : f.short;
-        const kindKey = `${g.part}|${f.source}|${f.kind || f.short}`;
+        const kindKey = f.sameKey || `${f.part}|${f.source}|${f.kind || f.short}`;
         if (seen.has(kindKey)) return `same: ${short}`;
         seen.add(kindKey);
         return f.explain ? `${short}: ${f.explain}` : short;
       });
       return {
-        staff: g.staff, bar: g.bar, measure: g.measure, part: g.part, level,
+        staff: g.staff, bar: g.bar, measure: g.measure, part: [...g.parts][0] ?? null, parts: [...g.parts], level,
         needsEyes: level >= 2,
         kinds: findings.map((f) => f.kind || f.source),
         color: LEVEL_COLOR[level],
@@ -730,13 +753,24 @@ class Session {
 
   // startupMs bounds the retries for "not ready yet" (refused, closed, busy): 3 minutes, or 5 when this
   // run has just launched Sibelius.
-  async connect({ approvalMs = Number(process.env.SIBELIUS_IMPORT_DOCTOR_APPROVAL_SECONDS || 300) * 1000, startupMs = 180000 } = {}) {
+  // A rejection or busyError while Sibelius shows a box of its own (Missing Fonts, file recovery after
+  // a crash, a leftover connection box) is not the user's No: report the box and keep trying.
+  async connect({ approvalMs = Number(process.env.SIBELIUS_IMPORT_DOCTOR_APPROVAL_SECONDS || 300) * 1000, startupMs = 180000, mode = "user-clicks" } = {}) {
     const t0 = Date.now();
-    let busyNoted = false;
+    let busyNoted = false, boxSince = 0;
     for (;;) {
       const r = await this.attempt(approvalMs);
       if (r === "ok") return;
-      if (r === "denied") throw new Fail("not-allowed", "Sibelius did not allow the connection (No was clicked).", "Ask the user whether to try again; then they click Yes.");
+      if (r === "denied" || r === "busy") {
+        const handled = await handleOpenBoxes(mode);
+        if (handled) {
+          boxSince ||= Date.now();
+          if (Date.now() - boxSince > approvalMs) throw new Fail("sibelius-busy", `Sibelius kept showing a box (${handled}).`, "Ask the user to close the box in Sibelius, then run again.");
+          await sleep(3000);
+          continue;
+        }
+      }
+      if (r === "denied") throw new Fail("not-allowed", "Sibelius did not allow the connection (No was clicked, or another Sibelius box was in the way).", "Ask the user whether they clicked No. If Sibelius was showing another box (for example Missing Fonts), close it and run again; otherwise ask whether to try again, then they click Yes.");
       if (r === "timeout") throw new Fail("approval-timeout", "Nobody answered Sibelius' connection box in time.", "The box stays open in Sibelius. Ask the user to click No on it, then run the check again and click Yes on the new box.");
       if (Date.now() - t0 > startupMs) {
         if (r === "busy") throw new Fail("sibelius-busy", "Sibelius is busy: a dialog box is open, often a connection box left over from an earlier attempt.", "Ask the user to close any open dialog in Sibelius (for a leftover connection box, click No), then run again.");
@@ -842,6 +876,72 @@ function osa(args) {
 }
 
 const clickImportOk = () => osa(["-e", CLICK_OK_SCRIPT, IMPORT_BOX_NEEDLE]);
+
+// Sibelius' own dialog windows, as "subrole<TAB>name" lines.
+const LIST_WINDOWS_SCRIPT = `tell application "System Events"
+  if not (exists process "Sibelius") then return ""
+  set out to ""
+  tell process "Sibelius"
+    repeat with w in windows
+      set sr to ""
+      set nm to ""
+      try
+        set sr to (subrole of w as text)
+      end try
+      try
+        set nm to (name of w as text)
+      end try
+      set out to out & sr & tab & nm & linefeed
+    end repeat
+  end tell
+  return out
+end tell`;
+
+// Windows that are not blocking boxes even when Accessibility calls them dialogs.
+const NOT_A_BOX = new Set(["Quick Start"]);
+// Boxes that are safe to dismiss with OK in agent-clicks mode. Never click a box not listed here.
+export const HARMLESS_BOXES = new Set(["Missing Fonts"]);
+
+export function parseBoxes(listing) {
+  return listing.split("\n").map((l) => l.split("\t")).filter(([sr, name]) => /dialog/i.test(sr || "") && !NOT_A_BOX.has((name || "").trim())).map(([, name]) => (name || "").trim());
+}
+
+// null when the windows cannot be read (no Accessibility permission, not macOS).
+async function openBoxes() {
+  if (process.platform !== "darwin") return null;
+  const r = await osa(["-e", LIST_WINDOWS_SCRIPT]);
+  if (r === "no-permission" || r === "error") return null;
+  return parseBoxes(r);
+}
+
+const boxesSeen = new Set();
+
+export function openBoxSay(names) {
+  const named = names.filter(Boolean);
+  if (named.length) return `Sibelius is showing a box (${named.join(", ")}); please click OK on it, then I will continue.`;
+  return "Sibelius is showing a box; please close it (if it asks to allow a connection from an earlier attempt, click No), then I will continue.";
+}
+
+// Returns a label for the open boxes when there are any (after reporting them, and in agent-clicks
+// mode dismissing the harmless ones), or null when none can be seen.
+async function handleOpenBoxes(mode) {
+  const boxes = await openBoxes();
+  if (!boxes || !boxes.length) return null;
+  const label = boxes.map((b) => b || "unnamed box").join(", ");
+  const dismissed = new Set();
+  if (mode === "agent-clicks") {
+    for (const name of boxes.filter((b) => HARMLESS_BOXES.has(b))) {
+      const r = await osa(["-e", CLICK_OK_SCRIPT, name]);
+      if (r === "clicked") { dismissed.add(name); emit({ event: "dismissed-sibelius-box", box: name }); say(`Clicked OK on Sibelius' "${name}" box.`); }
+    }
+  }
+  const remaining = boxes.filter((b) => !dismissed.has(b));
+  if (remaining.length && !boxesSeen.has(label)) {
+    boxesSeen.add(label);
+    emit({ event: "sibelius-has-open-box", boxes: remaining, say: openBoxSay(remaining) });
+  }
+  return label;
+}
 const wakeScreen = () => osa(["-e", WAKE_SCRIPT]);
 
 // agent-clicks: keep looking for the box until the import returns. After 30 s without success the user
@@ -945,7 +1045,7 @@ async function check(opts) {
   const launched = !sibeliusRunning();
   if (launched) { say("Starting Sibelius..."); emit({ event: "starting-sibelius" }); launchSibelius(install.path); }
   const sess = new Session(opts.port);
-  await sess.connect({ startupMs: launched ? 300000 : 180000 });
+  await sess.connect({ startupMs: launched ? 300000 : 180000, mode });
   emit({ event: "connected" });
   try {
     const ping = await sess.plugin("Ping");

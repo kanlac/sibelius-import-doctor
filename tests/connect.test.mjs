@@ -9,7 +9,7 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const SCRIPTS = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "plugins", "sibelius-import-doctor", "skills", "sibelius-import-doctor", "scripts");
-const { parseXml, loadScore, analyseScore, compare, compareToOriginal, loadChanges, locate, buildComments, doctorItems, LEVEL_COLOR } = await import(path.join(SCRIPTS, "connect.mjs"));
+const { parseXml, loadScore, analyseScore, compare, compareToOriginal, loadChanges, locate, buildComments, doctorItems, LEVEL_COLOR, parseBoxes, openBoxSay, HARMLESS_BOXES } = await import(path.join(SCRIPTS, "connect.mjs"));
 
 const SCORE = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
@@ -307,6 +307,26 @@ test("the installer only upgrades, and says so when it keeps a newer plug-in", (
   const older = newer.replace("'99.0.0'", "'0.0.1'");
   fs.writeFileSync(file, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(older.slice(1), "utf16le")]));
   assert.equal(run().changed, true);
+});
+
+test("the same finding in one bar in several parts becomes one comment on the topmost staff", () => {
+  const attn = (staff, part, bar) => ({ staff, bar, measure: String(bar), part, source: "attention", kind: "bars-longer-than-time-signature", short: "bar longer than the time signature", explain: "compare with the original", level: 2 });
+  const missing = { staff: 4, bar: 6, measure: "6", part: "Harp", source: "import", kind: "notes-missing", short: "1 note missing (file 4, Sibelius 3)", explain: "lost on import" };
+  const comments = buildComments([attn(5, "Oboe 2", 6), attn(2, "Flute 1", 6), attn(7, "Clarinet 1", 6), attn(9, "Horn", 6), missing, attn(2, "Flute 1", 7), attn(3, "Flute 2", 7)]);
+  assert.deepEqual(comments.map((g) => [g.bar, g.staff, g.level]), [[6, 2, 2], [6, 4, 3], [7, 2, 2]]);
+  assert.equal(comments[0].text, "Doctor 2: bar longer than the time signature in 4 parts (Oboe 2, Flute 1, Clarinet 1, +1 more): compare with the original");
+  assert.deepEqual(comments[0].parts, ["Oboe 2", "Flute 1", "Clarinet 1", "Horn"]);
+  assert.equal(comments[2].text, "Doctor 2: same: bar longer than the time signature in 2 parts (Flute 1, Flute 2)");
+});
+
+test("Sibelius' own boxes are recognised from the window list; only known harmless ones may be clicked", () => {
+  const listing = "AXFloatingWindow\tKeypad\nAXStandardWindow\tSong - Sibelius\nAXDialog\tMissing Fonts\nAXDialog\tQuick Start\nAXDialog\t\n";
+  assert.deepEqual(parseBoxes(listing), ["Missing Fonts", ""]);
+  assert.deepEqual(parseBoxes("AXStandardWindow\tSong\n"), []);
+  assert.ok(HARMLESS_BOXES.has("Missing Fonts"));
+  assert.equal(HARMLESS_BOXES.has(""), false);
+  assert.equal(openBoxSay(["Missing Fonts"]), "Sibelius is showing a box (Missing Fonts); please click OK on it, then I will continue.");
+  assert.match(openBoxSay([""]), /^Sibelius is showing a box; please close it/);
 });
 
 test(".mxl archives are read through META-INF/container.xml", () => {
