@@ -246,7 +246,7 @@ export class Fixer {
         }
       }
       this.log.push({
-        ...ctx, fix: "trim-shorten", what: s.kind !== "note" ? s.kind : s.rest ? "rest" : "note",
+        ...ctx, ...(findText(s.el, "staff") ? { staff: findText(s.el, "staff") } : {}), fix: "trim-shorten", what: s.kind !== "note" ? s.kind : s.rest ? "rest" : "note",
         chord_size: group.length, from_ticks: tk(s.old, divisions), to_ticks: tk(s.new, divisions),
         ...(s.note ? { note: s.note } : {}),
       });
@@ -349,7 +349,8 @@ export class Fixer {
         for (const tr of [...iter(m, "tremolo")]) {
           const note = tr.parent?.parent?.parent;
           const ty = attr(tr, "type");
-          const ctx = { part: attr(part, "id"), measure: k + 1, number: attr(m, "number") };
+          const staff = note ? findText(note, "staff") : null;
+          const ctx = { part: attr(part, "id"), measure: k + 1, number: attr(m, "number"), ...(staff ? { staff } : {}) };
           if (this.opts.tremolo && (ty === "start" || ty === "stop")) {
             const tm = note && find(note, "time-modification");
             if (tm && findText(tm, "actual-notes") === "2" && findText(tm, "normal-notes") === "1") {

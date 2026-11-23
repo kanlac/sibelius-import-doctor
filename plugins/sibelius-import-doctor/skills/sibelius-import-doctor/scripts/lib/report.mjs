@@ -68,7 +68,7 @@ export function outcome({ before, after, log, mode, options, dryRun }) {
 }
 
 /** Things the user should look at even after the fix. */
-export function attention({ found, log, mode, root, names }) {
+export function attention({ found, log, mode, root }) {
   const out = [];
   const removed = log.filter((c) => c.fix === "trim-delete");
   if (removed.length) {
@@ -100,7 +100,6 @@ export function attention({ found, log, mode, root, names }) {
     if (p.kind === "missing-composer" && !p.fixed) out.push({ kind: "composer-unknown", message: "The file has no composer. Ask for the name and run again with --composer \"Name\"." });
     if (p.kind === "two-note-tremolo-unusual") out.push({ kind: "unusual-tremolo", message: "Two-note tremolos written in an untested way were left unchanged.", where: p.where });
   }
-  void names;
   return out;
 }
 
