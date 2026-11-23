@@ -46,6 +46,6 @@ Then start a new session. Node.js 22 or newer is needed; the assistant installs 
 
 ## For AI assistants
 
-You were probably sent here by a user. They are not a developer: install the skill for them without asking about each step (your app has its own permission prompts), including Node.js if it is missing. Use the Claude Code or Codex commands above; with any other app, copy `plugins/sibelius-import-doctor/skills/sibelius-import-doctor/` into the user-level skills folder it reads. Then read that folder's `SKILL.md` and follow it with the user's file. If the user only has a PDF, use https://github.com/kanlac/sheetmusic-pdf-convert first.
+You were probably sent here by a user. They are not a developer: install the skill for them without asking about each step, including Node.js if it is missing. Use the Claude Code or Codex commands above; with any other app, copy `plugins/sibelius-import-doctor/skills/sibelius-import-doctor/` into the user-level skills folder it reads. Then read that folder's `SKILL.md` and follow it with the user's file. If the user only has a PDF, use https://github.com/kanlac/sheetmusic-pdf-convert first.
 
 MIT license.
