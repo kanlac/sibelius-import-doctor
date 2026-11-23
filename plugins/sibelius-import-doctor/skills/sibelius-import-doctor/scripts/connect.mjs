@@ -427,7 +427,7 @@ export function buildComments(items) {
     .map((g) => ({
       staff: g.staff, bar: g.bar, measure: g.measure, part: g.part,
       sources: [...g.sections.keys()],
-      text: [...g.sections].map(([sec, texts]) => `${sec}: ${[...new Set(texts)].join("; ")}.`).join(" "),
+      text: `Import Doctor. ${[...g.sections].map(([sec, texts]) => `${sec}: ${[...new Set(texts)].join("; ")}.`).join(" ")}`,
     }));
 }
 

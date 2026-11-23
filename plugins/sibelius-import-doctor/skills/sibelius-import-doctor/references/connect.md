@@ -61,7 +61,7 @@ Human clicks per run: user-clicks = 1 approval + 1 OK per imported file (3 with 
 
 ## What the comments say
 
-One comment per staff and bar, signed "Import Doctor", made of the parts that apply:
+One comment per staff and bar, starting with "Import Doctor." and made of the parts that apply:
 
 - `Fixed: notes past the bar line were trimmed.` (from `--changes`, list `changed`)
 - `Not fixed: voice 2 is still too long.` (from `--changes`, list `unfixed`)

@@ -127,8 +127,8 @@ test("comments cover changed, unfixed, differing and mis-imported bars", () => {
   ];
   const comments = buildComments(items);
   assert.equal(comments.length, 2);
-  assert.equal(comments[0].text, "Fixed: two-note tremolo rewritten.");
-  assert.match(comments[1].text, /^Not fixed: voice 5 could not be shortened\. Still differs from your file: 1 note missing \(your file has 1, Sibelius shows 0\)\. Sibelius did not import this as the fixed file says: /);
+  assert.equal(comments[0].text, "Import Doctor. Fixed: two-note tremolo rewritten.");
+  assert.match(comments[1].text, /^Import Doctor\. Not fixed: voice 5 could not be shortened\. Still differs from your file: 1 note missing \(your file has 1, Sibelius shows 0\)\. Sibelius did not import this as the fixed file says: /);
 });
 
 test(".mxl archives are read through META-INF/container.xml", () => {
