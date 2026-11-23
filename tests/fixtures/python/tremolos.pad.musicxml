@@ -1,0 +1,133 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
+<score-partwise version="4.0">
+  <work>
+    <work-title>Tremolo Test</work-title>
+  </work>
+  <identification><creator type="composer">Test Composer</creator></identification><part-list>
+    <score-part id="P1">
+      <part-name>Violoncello</part-name>
+    </score-part>
+    <score-part id="P2">
+      <part-name>Timpani</part-name>
+    </score-part>
+  </part-list>
+  <part id="P1">
+    <!-- bar 1: a two-note tremolo filling a 4/4 bar, written as whole notes with a 2:1 time modification -->
+    <measure number="1">
+      <attributes>
+        <divisions>4</divisions>
+        <key><fifths>0</fifths></key>
+        <time><beats>4</beats><beat-type>4</beat-type></time>
+        <clef><sign>F</sign><line>4</line></clef>
+      </attributes>
+      <note>
+        <pitch><step>E</step><octave>3</octave></pitch>
+        <duration>8</duration>
+        <voice>1</voice>
+        <type>half</type>
+        <notations>
+          <ornaments>
+            <tremolo type="start">3</tremolo>
+          </ornaments>
+        </notations>
+      </note>
+      <note>
+        <pitch><step>D</step><octave>3</octave></pitch>
+        <duration>8</duration>
+        <voice>1</voice>
+        <type>half</type>
+        <notations>
+          <ornaments>
+            <tremolo type="stop">3</tremolo>
+          </ornaments>
+        </notations>
+      </note>
+    </measure>
+    <!-- bar 2: half-note and quarter-note two-note tremolos -->
+    <measure number="2">
+      <note>
+        <pitch><step>C</step><octave>3</octave></pitch>
+        <duration>4</duration>
+        <voice>1</voice>
+        <type>quarter</type>
+        <notations><ornaments><tremolo type="start">3</tremolo></ornaments></notations>
+      </note>
+      <note>
+        <pitch><step>G</step><octave>3</octave></pitch>
+        <duration>4</duration>
+        <voice>1</voice>
+        <type>quarter</type>
+        <notations><ornaments><tremolo type="stop">3</tremolo></ornaments></notations>
+      </note>
+      <note>
+        <pitch><step>A</step><octave>3</octave></pitch>
+        <duration>2</duration>
+        <voice>1</voice>
+        <type>eighth</type>
+        <notations><ornaments><tremolo type="start">2</tremolo></ornaments></notations>
+      </note>
+      <note>
+        <pitch><step>F</step><octave>3</octave></pitch>
+        <duration>2</duration>
+        <voice>1</voice>
+        <type>eighth</type>
+        <notations><ornaments><tremolo type="stop">2</tremolo></ornaments></notations>
+      </note>
+      <note>
+        <pitch><step>E</step><octave>3</octave></pitch>
+        <duration>4</duration>
+        <voice>1</voice>
+        <type>quarter</type>
+      </note>
+    </measure>
+    <!-- bar 3: an unmeasured tremolo and an ordinary three-stroke tremolo -->
+    <measure number="3">
+      <note>
+        <pitch><step>D</step><octave>3</octave></pitch>
+        <duration>8</duration>
+        <voice>1</voice>
+        <type>half</type>
+        <notations><ornaments><tremolo type="single">3</tremolo></ornaments></notations>
+      </note>
+      <note>
+        <pitch><step>D</step><octave>3</octave></pitch>
+        <duration>8</duration>
+        <voice>1</voice>
+        <type>half</type>
+        <notations><ornaments><tremolo type="single">3</tremolo></ornaments></notations>
+      </note>
+      <barline location="right"><bar-style>light-heavy</bar-style></barline>
+    </measure>
+  </part>
+  <part id="P2">
+    <measure number="1">
+      <attributes>
+        <divisions>4</divisions>
+        <key><fifths>0</fifths></key>
+        <time><beats>4</beats><beat-type>4</beat-type></time>
+        <clef><sign>F</sign><line>4</line></clef>
+      </attributes>
+      <note>
+        <pitch><step>A</step><octave>2</octave></pitch>
+        <duration>16</duration>
+        <voice>1</voice>
+        <type>whole</type>
+        <notations><ornaments><tremolo type="single">3</tremolo></ornaments></notations>
+      </note>
+    </measure>
+    <measure number="2">
+      <note><rest measure="yes"/><duration>16</duration><voice>1</voice></note>
+    </measure>
+    <measure number="3">
+      <note>
+        <pitch><step>D</step><octave>3</octave></pitch>
+        <duration>16</duration>
+        <voice>1</voice>
+        <type>whole</type>
+        <notations><ornaments><tremolo type="single">3</tremolo></ornaments></notations>
+      </note>
+      <barline location="right"><bar-style>light-heavy</bar-style></barline>
+    </measure>
+  </part>
+</score-partwise>

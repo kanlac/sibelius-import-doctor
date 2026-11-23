@@ -1,0 +1,10 @@
+{
+ "change_counts": {
+  "composer": 1,
+  "measure-rest": 1,
+  "pad": 2,
+  "trim-delete": 2,
+  "trim-shorten": 1
+ },
+ "deleted_noteheads": 5
+}
