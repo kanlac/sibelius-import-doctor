@@ -183,8 +183,10 @@ function tremoloKinds(note) {
 }
 
 function measureFacts(m, st) {
-  const f = { number: m.attrs.number ?? "", implicit: m.attrs.implicit === "yes", heads: {}, trem: {}, fill: 0 };
-  let pos = 0, lastStart = 0;
+  // partTrem: tremolos of the whole part, one per voice and onset, so a chord spread over two staves
+  // (cross-staff notation) counts once, as Sibelius shows it.
+  const f = { number: m.attrs.number ?? "", implicit: m.attrs.implicit === "yes", heads: {}, partTrem: { single: new Set(), double: new Set() }, fill: 0 };
+  let pos = 0, lastStart = 0, lastVoice = "1";
   for (const el of m.children) {
     if (el.name === "attributes") {
       const d = kidText(el, "divisions"); if (d) st.divisions = Number(d);
@@ -200,15 +202,17 @@ function measureFacts(m, st) {
       f.fill = Math.max(f.fill, pos);
     } else if (el.name === "note") {
       const isChord = !!kid(el, "chord"), isGrace = !!kid(el, "grace"), isRest = !!kid(el, "rest");
-      const staff = kidText(el, "staff") || "1", voice = kidText(el, "voice") || "1";
+      // Chord members often omit <voice>; they belong to the voice of the chord's first note.
+      const staff = kidText(el, "staff") || "1", voice = kidText(el, "voice") || (isChord ? lastVoice : "1");
+      if (!isChord) lastVoice = voice;
       const d = isGrace ? 0 : (Number(kidText(el, "duration")) || 0) * TICKS / st.divisions;
       const start = isChord ? lastStart : pos;
       if (!isChord) { lastStart = pos; pos += d; f.fill = Math.max(f.fill, pos); }
       if (isRest) continue;
       f.heads[staff] = (f.heads[staff] || 0) + 1;
       for (const kind of tremoloKinds(el)) {
-        const t = (f.trem[staff] ||= { single: new Set(), unmeasured: new Set(), start: new Set() });
-        if (t[kind]) t[kind].add(`${voice}@${start}@${isGrace}`);
+        const set = kind === "single" || kind === "unmeasured" ? f.partTrem.single : kind === "start" ? f.partTrem.double : null;
+        if (set) set.add(`${voice}@${start}@${isGrace}`);
       }
     }
   }
@@ -225,6 +229,7 @@ export function analyseScore(root) {
   const parts = new Map(kids(root, "part").map((p) => [p.attrs.id, p]));
   for (const id of parts.keys()) if (!order.includes(id)) order.push(id);
   const staves = [];
+  const partsOut = [];
   let bars = null;
   for (const id of order) {
     const part = parts.get(id);
@@ -233,22 +238,25 @@ export function analyseScore(root) {
     const facts = kids(part, "measure").map((m) => measureFacts(m, st));
     if (!bars) bars = facts.map((f) => ({ number: f.number, expected: f.expected, implicit: f.implicit, fill: 0 }));
     facts.forEach((f, i) => { if (bars[i]) bars[i].fill = Math.max(bars[i].fill, f.fill); });
+    const first = staves.length + 1;
     for (let k = 1; k <= st.staves; k++) {
-      staves.push({
-        part: id,
-        name: names[id] || id,
-        staffInPart: k,
-        bars: facts.map((f) => {
-          const t = f.trem[String(k)];
-          return { heads: f.heads[String(k)] || 0, single: t ? t.single.size + t.unmeasured.size : 0, double: t ? t.start.size : 0 };
-        }),
-      });
+      staves.push({ part: id, name: names[id] || id, staffInPart: k, bars: facts.map((f) => ({ heads: f.heads[String(k)] || 0 })) });
     }
+    partsOut.push({
+      id,
+      name: names[id] || id,
+      staves: Array.from({ length: st.staves }, (_, k) => first + k),
+      bars: facts.map((f) => ({
+        heads: Object.values(f.heads).reduce((a, n) => a + n, 0),
+        single: f.partTrem.single.size,
+        double: f.partTrem.double.size,
+      })),
+    });
   }
   // What the file asks for: a pickup lasts as long as its music; any other bar at least its time
   // signature, longer when the music in it is longer (Sibelius pads short bars with rests).
   for (const b of bars || []) b.intended = b.implicit ? Math.round(b.fill) : Math.max(b.expected, Math.round(b.fill));
-  return { staves, bars: bars || [] };
+  return { staves, parts: partsOut, bars: bars || [] };
 }
 
 // ---------------------------------------------------------------- Sibelius readback analysis
@@ -289,13 +297,33 @@ const quarters = (ticks) => {
 
 function plural(n, word) { return `${n} ${word}${n === 1 ? "" : "s"}`; }
 
+// Notes and tremolos are compared per part and bar, summed over the part's staves: Sibelius may put a
+// note on another staff of the same part than the file's <staff> says (cross-staff notation in piano,
+// harp or accordion parts), which is not a loss. Such moves are only counted (movedBetweenStaves).
+// A part-level difference is reported on the staff of the part where it shows most.
+function partCell(cells, part, b) {
+  const per = part.staves.map((s) => ({ s, c: cells.get(`${s}:${b}`) || { heads: 0, single: 0, double: 0, doubleInTuplet: 0 } }));
+  const sum = (k) => per.reduce((a, x) => a + x.c[k], 0);
+  return { per, heads: sum("heads"), single: sum("single"), double: sum("double") };
+}
+
+function staffDiffs(xml, part, per, b) {
+  return per.map(({ s, c }) => ({ s, d: c.heads - xml.staves[s - 1].bars[b - 1].heads }));
+}
+
+function pickStaff(diffs, sign) {
+  let best = diffs[0];
+  for (const x of diffs) if (sign * x.d > sign * best.d) best = x;
+  return best.s;
+}
+
 // Compare one imported file with its MusicXML. Returns totals and a list of bars that look wrong.
 export function compare(xml, info, rows, barLengths) {
   const { cells, overflow } = analyseReadback(rows, barLengths);
   const structure = { xmlStaves: xml.staves.length, sibeliusStaves: info.staffCount, xmlBars: xml.bars.length, sibeliusBars: barLengths.length };
   const staffMatch = structure.xmlStaves === structure.sibeliusStaves;
   const problems = [];
-  let xmlNotes = 0, sibNotes = 0, lost = 0, gained = 0;
+  let xmlNotes = 0, sibNotes = 0, lost = 0, gained = 0, moved = 0;
   for (const st of xml.staves) for (const b of st.bars) xmlNotes += b.heads;
   for (const c of cells.values()) sibNotes += c.heads;
   const nBars = Math.max(xml.bars.length, barLengths.length);
@@ -305,39 +333,47 @@ export function compare(xml, info, rows, barLengths) {
     if (bar && barLengths[b - 1] !== undefined && barLengths[b - 1] !== bar.intended) {
       problems.push({ staff: 1, bar: b, measure: label, kind: "bar-length", text: `this bar lasts ${quarters(barLengths[b - 1])} quarter notes in Sibelius, but the music in the file lasts ${quarters(bar.intended)}` });
     }
-    if (!staffMatch) continue;
-    xml.staves.forEach((st, i) => {
-      const s = i + 1;
-      const want = st.bars[b - 1] || { heads: 0, single: 0, double: 0 };
-      const got = cells.get(`${s}:${b}`) || { heads: 0, single: 0, double: 0, doubleInTuplet: 0 };
-      const at = { staff: s, bar: b, measure: label, part: st.name };
-      if (got.heads < want.heads) { lost += want.heads - got.heads; problems.push({ ...at, kind: "notes-missing", text: `the file has ${plural(want.heads, "note")} here, Sibelius shows ${got.heads}` }); }
-      if (got.heads > want.heads) { gained += got.heads - want.heads; problems.push({ ...at, kind: "notes-extra", text: `the file has ${plural(want.heads, "note")} here, Sibelius shows ${got.heads}` }); }
-      if (got.single < want.single) problems.push({ ...at, kind: "tremolo-missing", text: `${plural(want.single - got.single, "tremolo")} from the file ${want.single - got.single === 1 ? "is" : "are"} missing` });
-      if (got.double < want.double) problems.push({ ...at, kind: "two-note-tremolo-missing", text: `${plural(want.double - got.double, "two-note tremolo")} from the file ${want.double - got.double === 1 ? "is" : "are"} missing` });
-      if (got.doubleInTuplet > 0) problems.push({ ...at, kind: "two-note-tremolo-in-tuplet", text: "a two-note tremolo here sits inside a tuplet, so it may be drawn as double whole notes" });
-      const voices = overflow.get(`${s}:${b}`);
-      if (voices) problems.push({ ...at, kind: "voice-overflow", text: `notes in voice ${voices.join(" and ")} run past the end of the bar` });
-    });
+    if (!staffMatch || !bar) continue;
+    for (const part of xml.parts) {
+      const want = part.bars[b - 1] || { heads: 0, single: 0, double: 0 };
+      const got = partCell(cells, part, b);
+      const diffs = staffDiffs(xml, part, got.per, b);
+      const short = diffs.reduce((a, x) => a + Math.max(0, -x.d), 0), extra = diffs.reduce((a, x) => a + Math.max(0, x.d), 0);
+      moved += Math.min(short, extra);
+      const at = (sign) => ({ staff: pickStaff(diffs, sign), bar: b, measure: label, part: part.name });
+      const here = part.staves.length > 1 ? "in this bar across the part's staves" : "here";
+      if (got.heads < want.heads) { lost += want.heads - got.heads; problems.push({ ...at(-1), kind: "notes-missing", text: `the file has ${plural(want.heads, "note")} ${here}, Sibelius shows ${got.heads}` }); }
+      if (got.heads > want.heads) { gained += got.heads - want.heads; problems.push({ ...at(1), kind: "notes-extra", text: `the file has ${plural(want.heads, "note")} ${here}, Sibelius shows ${got.heads}` }); }
+      if (got.single < want.single) problems.push({ ...at(-1), kind: "tremolo-missing", text: `${plural(want.single - got.single, "tremolo")} from the file ${want.single - got.single === 1 ? "is" : "are"} missing` });
+      if (got.double < want.double) problems.push({ ...at(-1), kind: "two-note-tremolo-missing", text: `${plural(want.double - got.double, "two-note tremolo")} from the file ${want.double - got.double === 1 ? "is" : "are"} missing` });
+      for (const { s, c } of got.per) {
+        const cell = { staff: s, bar: b, measure: label, part: part.name };
+        if (c.doubleInTuplet > 0) problems.push({ ...cell, kind: "two-note-tremolo-in-tuplet", text: "a two-note tremolo here sits inside a tuplet, so it may be drawn as double whole notes" });
+        const voices = overflow.get(`${s}:${b}`);
+        if (voices) problems.push({ ...cell, kind: "voice-overflow", text: `notes in voice ${voices.join(" and ")} run past the end of the bar` });
+      }
+    }
   }
-  return { structure, staffMatch, xmlNotes, sibeliusNotes: sibNotes, lost, gained, problems, cells: { staffCount: info.staffCount, map: cells } };
+  return { structure, staffMatch, xmlNotes, sibeliusNotes: sibNotes, lost, gained, movedBetweenStaves: moved, problems, cells: { staffCount: info.staffCount, map: cells } };
 }
 
-// Bars of the fixed import whose note count differs from the user's original file.
-// Only meaningful when both files have the same staves and bars.
+// Bars of the fixed import whose note count differs from the user's original file, per part and bar
+// (like compare). Only meaningful when both files have the same staves and bars.
 export function compareToOriginal(orig, cells, nSibBars) {
   const out = [];
   if (!orig) return { compared: false, reason: "no original given", bars: out };
   if (orig.staves.length !== cells.staffCount || orig.bars.length !== nSibBars) {
     return { compared: false, reason: "the original and the fixed score have different staves or bar counts", bars: out };
   }
-  orig.staves.forEach((st, i) => st.bars.forEach((want, j) => {
-    const got = (cells.map.get(`${i + 1}:${j + 1}`) || { heads: 0 }).heads;
-    if (got !== want.heads) {
-      const diff = want.heads - got;
-      out.push({ staff: i + 1, bar: j + 1, measure: orig.bars[j].number, part: st.name, kind: "differs-from-original", text: `${plural(Math.abs(diff), "note")} ${diff > 0 ? "missing" : "more"} (your file has ${want.heads}, Sibelius shows ${got})` });
-    }
-  }));
+  for (const part of orig.parts) {
+    part.bars.forEach((want, j) => {
+      const got = partCell(cells.map, part, j + 1);
+      if (got.heads === want.heads) return;
+      const diff = want.heads - got.heads;
+      const staff = pickStaff(staffDiffs(orig, part, got.per, j + 1), diff > 0 ? -1 : 1);
+      out.push({ staff, bar: j + 1, measure: orig.bars[j].number, part: part.name, kind: "differs-from-original", text: `${plural(Math.abs(diff), "note")} ${diff > 0 ? "missing" : "more"} (your file has ${want.heads}${part.staves.length > 1 ? " across the part's staves" : ""}, Sibelius shows ${got.heads})` });
+    });
+  }
   return { compared: true, bars: out };
 }
 
@@ -726,7 +762,7 @@ async function readScore(sess) {
 const cellCount = (list) => new Set(list.map((p) => `${p.staff}:${p.bar}`)).size;
 
 function importSummary(c) {
-  return { xmlNotes: c.xmlNotes, sibeliusNotes: c.sibeliusNotes, lost: c.lost, gained: c.gained, barsThatLookWrong: cellCount(c.problems), structure: c.structure };
+  return { xmlNotes: c.xmlNotes, sibeliusNotes: c.sibeliusNotes, lost: c.lost, gained: c.gained, movedBetweenStaves: c.movedBetweenStaves ?? 0, barsThatLookWrong: cellCount(c.problems), structure: c.structure };
 }
 
 async function importAndRead(sess, file, mode, timings) {

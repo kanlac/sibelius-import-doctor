@@ -81,8 +81,8 @@ test("analysis expands staves and counts chords, grace notes and tremolos", () =
   assert.deepEqual(a.staves[0].bars.map((b) => b.heads), [1, 4]);
   assert.deepEqual(a.staves[1].bars.map((b) => b.heads), [0, 2]);
   assert.deepEqual(a.staves[2].bars.map((b) => b.heads), [0, 1]);
-  assert.equal(a.staves[0].bars[1].single, 1);
-  assert.equal(a.staves[0].bars[1].double, 1);
+  assert.equal(a.parts[0].bars[1].single, 1);
+  assert.equal(a.parts[0].bars[1].double, 1);
   assert.deepEqual(a.bars.map((b) => [b.number, b.intended]), [["0", 256], ["1", 768]]);
 });
 
@@ -130,7 +130,43 @@ test("comments cover changed, unfixed, differing and mis-imported bars", () => {
   assert.equal(comments[0].text, "Import Doctor: Changed: two-note tremolo rewritten.");
   assert.equal(comments[0].needsEyes, false);
   assert.equal(comments[1].needsEyes, true);
-  assert.match(comments[1].text, /^Import Doctor: Could not be fixed: voice 5 could not be shortened\. Still differs from your file: 1 note missing \(your file has 1, Sibelius shows 0\)\. Sibelius shows this differently from the fixed file: /);
+  assert.equal(comments[1].text, "Import Doctor: Could not be fixed: voice 5 could not be shortened. Still differs from your file: 1 note missing (your file has 3 across the part's staves, Sibelius shows 2). Sibelius shows this differently from the fixed file: the file has 3 notes in this bar across the part's staves, Sibelius shows 2.");
+});
+
+test("a note Sibelius puts on the other staff of the same part is not a loss", () => {
+  const a = analyseScore(loadScore(tmpFile("s.musicxml", SCORE)));
+  const rows = PERFECT.map((r) => r.slice());
+  rows[6][5] = 1; // right hand shows one note of its chord ...
+  rows.push([3, 2, 0, 768, 2, 1, 0, 0, 0, 0, 0]); // ... the other on the left-hand staff
+  const c = compare(a, INFO, rows, LENGTHS);
+  assert.deepEqual(c.problems, []);
+  assert.equal(c.lost, 0);
+  assert.equal(c.gained, 0);
+  assert.equal(c.movedBetweenStaves, 1);
+  assert.deepEqual(compareToOriginal(a, c.cells, LENGTHS.length).bars, []);
+});
+
+test("a tremolo on a chord spread over both staves counts once, as Sibelius shows it", () => {
+  const xml = SCORE.replace('<note><pitch><step>C</step><octave>3</octave></pitch><duration>3</duration><voice>5</voice><staff>2</staff></note>',
+    '<note><chord/><pitch><step>C</step><octave>3</octave></pitch><duration>3</duration><voice>1</voice><staff>2</staff><notations><ornaments><tremolo type="single">3</tremolo></ornaments></notations></note>')
+    .replace('<note><chord/><pitch><step>E</step><octave>4</octave></pitch><duration>3</duration><voice>1</voice><staff>1</staff></note>',
+    '<note><chord/><pitch><step>E</step><octave>4</octave></pitch><duration>3</duration><voice>1</voice><staff>1</staff><notations><ornaments><tremolo type="single">3</tremolo></ornaments></notations></note>')
+    .replace("<backup><duration>3</duration></backup>", "");
+  const a = analyseScore(loadScore(tmpFile("x.musicxml", xml)));
+  assert.equal(a.parts[1].bars[1].single, 1);
+  const rows = PERFECT.filter((r) => r[0] !== 3).map((r) => r.slice());
+  rows[6][5] = 3; rows[6][9] = 3; // one chord of three notes with a tremolo, all on the right-hand staff
+  const c = compare(a, INFO, rows, LENGTHS);
+  assert.deepEqual(c.problems, []);
+  assert.equal(c.movedBetweenStaves, 1);
+});
+
+test("chord members without <voice> belong to the chord's voice (one tremolo per chord)", () => {
+  const xml = SCORE.replace('<note><pitch><step>C</step><octave>3</octave></pitch><duration>3</duration><voice>5</voice><staff>2</staff></note>',
+    '<note><pitch><step>C</step><octave>3</octave></pitch><duration>3</duration><voice>5</voice><staff>2</staff><notations><ornaments><tremolo type="single">3</tremolo></ornaments></notations></note>' +
+    '<note><chord/><pitch><step>G</step><octave>3</octave></pitch><duration>3</duration><staff>2</staff><notations><ornaments><tremolo type="single">3</tremolo></ornaments></notations></note>');
+  const a = analyseScore(loadScore(tmpFile("v.musicxml", xml)));
+  assert.equal(a.parts[1].bars[1].single, 1);
 });
 
 test("the doctor's report.json: harmless rest changes get no comment, note and tremolo changes do", () => {

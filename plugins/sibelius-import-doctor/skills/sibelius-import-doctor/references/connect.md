@@ -38,7 +38,7 @@ This is step 3 of SKILL.md. `scripts/connect.mjs` opens the user's original and 
    | `error` | `code`, `message`, `hint`; exit code 1 |
 
    Each waiting event carries a `say` sentence you can pass on.
-8. The `done` line has the `.sib` path, the JSON details path (`<fixed name>.sibelius-check.json`), note totals for the original and the fixed import (`xmlNotes`, `sibeliusNotes`, `lost`, `gained`), `differsFromOriginalBars`, and `comments`: how many bars got a comment, how many were only changed and need nothing from the user (`changedNothingToDo`), how many need the user's eyes (`needYourEyes`: could not be fixed, still differs from their file, or Sibelius shows something different), how many harmless rest-only changes were left uncommented, plus the first bars needing eyes with part name and bar number. Lead with that in plain words.
+8. The `done` line has the `.sib` path, the JSON details path (`<fixed name>.sibelius-check.json`), note totals for the original and the fixed import (`xmlNotes`, `sibeliusNotes`, `lost`, `gained`, and `movedBetweenStaves`, which is informational), `differsFromOriginalBars`, and `comments`: how many bars got a comment, how many were only changed and need nothing from the user (`changedNothingToDo`), how many need the user's eyes (`needYourEyes`: could not be fixed, still differs from their file, or Sibelius shows something different), how many harmless rest-only changes were left uncommented, plus the first bars needing eyes with part name and bar number. Lead with that in plain words.
 
 ## The connection box (approval)
 
@@ -91,7 +91,9 @@ Any other tool can pass a plain list instead:
 
 ### How bars are compared
 
-Notes are counted per staff and bar: chord notes and grace notes count, rests do not, MusicXML `<staff>` numbers map to the Sibelius staves of the part in order, and bars are matched by position, not by printed number (a pickup is bar 1 in both). Comments and reports name the bar by the number printed in the file. If Sibelius ends up with a different number of staves than the file, only totals and bar lengths are compared. Bar length is checked against what the file asks for: the time signature, or the length of the music when that is longer (an overlong bar the doctor padded) or when the bar is a pickup.
+Notes and tremolos are counted **per part and bar**, summed over the part's staves: chord notes and grace notes count, rests do not, and a tremolo counts once per chord (chord members without a `<voice>` belong to the voice of the chord's first note). Counting per staff gave false alarms on multi-staff parts (piano, harp, accordion): Sibelius sometimes shows a note on another staff of the same part than the file's `<staff>` says (cross-staff notation), and a chord spread over both staves carries its tremolo on one staff only. A real Sibelius 25.7 export with a three-staff accordion part showed 109 notes "lost" and exactly 109 "gained" per staff, all netting to zero within each part. Such moves are now only counted (`movedBetweenStaves` in the totals) and never commented. A real difference inside a multi-staff part is reported on the staff of that part where it shows most, with the counts for the whole part ("across the part's staves"). Two-note tremolos inside a tuplet and voices running past the bar line are Sibelius-side facts and stay per staff.
+
+MusicXML `<staff>` numbers map to the Sibelius staves of the part in order, and bars are matched by position, not by printed number (a pickup is bar 1 in both). Comments and reports name the bar by the number printed in the file. If Sibelius ends up with a different number of staves than the file, only totals and bar lengths are compared. Bar length is checked against what the file asks for: the time signature, or the length of the music when that is longer (an overlong bar the doctor padded) or when the bar is a pickup.
 
 ## Errors and what to do
 
