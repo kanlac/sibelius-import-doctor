@@ -1,0 +1,11 @@
+{
+  "name": "sibelius-import-doctor",
+  "owner": { "name": "Tutti" },
+  "plugins": [
+    {
+      "name": "sibelius-import-doctor",
+      "source": "./plugins/sibelius-import-doctor",
+      "description": "Find and fix what Sibelius silently drops or mangles when it imports a MusicXML file."
+    }
+  ]
+}

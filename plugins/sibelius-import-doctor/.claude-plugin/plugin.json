@@ -1,0 +1,6 @@
+{
+  "name": "sibelius-import-doctor",
+  "version": "0.1.0",
+  "description": "Find and fix what Sibelius silently drops or mangles when it imports a MusicXML file.",
+  "license": "MIT"
+}

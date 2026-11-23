@@ -1,0 +1,12 @@
+{
+  "name": "sibelius-import-doctor",
+  "interface": { "displayName": "Sibelius Import Doctor" },
+  "plugins": [
+    {
+      "name": "sibelius-import-doctor",
+      "source": { "source": "local", "path": "./plugins/sibelius-import-doctor" },
+      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "category": "Productivity"
+    }
+  ]
+}
