@@ -1,0 +1,83 @@
+{
+	Initialize "() {
+AddToPluginsMenu('Sibelius Import Doctor','Run');
+}"
+	Run "() {
+Sibelius.MessageBox('Sibelius Import Doctor is installed. Your AI assistant uses it through Sibelius Connect to read notes back after an import. There is nothing to do here.');
+}"
+	Ping "() {
+return CreateDictionary('plugin', '0.1.0', 'programVersion', Sibelius.ProgramVersion, 'scores', Sibelius.ScoreCount);
+}"
+	OpenFile "(path) {
+ok = Sibelius.Open(path, True);
+return ok;
+}"
+	Info "() {
+score = Sibelius.ActiveScore;
+if (not IsObject(score)) { return CreateDictionary('ok', False); }
+staves = CreateSparseArray();
+i = 1;
+while (i <= score.StaffCount) {
+  st = score.NthStaff(i);
+  staves.Push(CreateDictionary('n', i, 'name', st.FullInstrumentName, 'short', st.ShortInstrumentName, 'bars', st.BarCount));
+  i = i + 1;
+}
+return CreateDictionary('ok', True, 'title', score.Title, 'composer', score.Composer, 'staffCount', score.StaffCount, 'staves', staves);
+}"
+	ReadNotes "(staffFrom, staffTo) {
+score = Sibelius.ActiveScore;
+out = CreateSparseArray();
+s = staffFrom;
+while (s <= staffTo) {
+  st = score.NthStaff(s);
+  b = 1;
+  while (b <= st.BarCount) {
+    bar = st.NthBar(b);
+    for each NoteRest nr in bar {
+      tl = 0;
+      tr = 0;
+      tup = nr.ParentTupletIfAny;
+      if (not (tup = null)) { tl = tup.Left; tr = tup.Right; }
+      g = 0;
+      if (nr.GraceNote) { g = 1; }
+      out.Push(CreateSparseArray(s, b, nr.Position, nr.Duration, nr.VoiceNumber, nr.NoteCount, tl, tr, nr.DoubleTremolos, nr.SingleTremolos, g));
+    }
+    b = b + 1;
+  }
+  s = s + 1;
+}
+return out;
+}"
+	BarLengths "() {
+score = Sibelius.ActiveScore;
+st = score.NthStaff(1);
+out = CreateSparseArray();
+b = 1;
+while (b <= st.BarCount) {
+  bar = st.NthBar(b);
+  out.Push(bar.Length);
+  b = b + 1;
+}
+return out;
+}"
+	Comment "(staffNum, barNum, text) {
+score = Sibelius.ActiveScore;
+st = score.NthStaff(staffNum);
+bar = st.NthBar(barNum);
+bar.AddCommentWithName(0, text, 'Import Doctor');
+return True;
+}"
+	SaveSib "(path) {
+score = Sibelius.ActiveScore;
+score.SaveAs(path, 'SIBL');
+return True;
+}"
+	CloseScore "(staffCount, title) {
+score = Sibelius.ActiveScore;
+if (not IsObject(score)) { return False; }
+if (score.StaffCount != staffCount) { return False; }
+if (score.Title != title) { return False; }
+Sibelius.Close(False);
+return True;
+}"
+}

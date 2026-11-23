@@ -28,7 +28,7 @@ Outputs, always as copies: the fixed MusicXML and a short report of what changed
 Only when Sibelius is installed and the user wants the check, or when the result needs to be sure. It imports the original and the fixed file, reads every note back, compares, and leaves a comment in a saved `.sib` on every bar it changed and every bar it could not fix, saying what happened there. `references/connect.md` has the connection steps, the bridge, and troubleshooting.
 
 - **Check the Sibelius version first.** The check is built for Sibelius 26.11 (the November 2026 release), where Connect gained live reading from Sibelius. If the installed version is older, tell the user to update and why, in a sentence, then carry on with step 2 without Connect.
-- **Connect approval is the user's to give.** Sibelius shows an approval box for each new connection; ask the user to click Allow. Never click it for them.
+- **Connect approval is the user's to give.** Sibelius shows an approval box for each new connection; ask the user to click Yes. Never click it for them.
 - **The MusicXML import options box.** Importing pops a box in Sibelius. The first time it matters, ask once: "Do you want to click OK yourself each time, or let me click it for you? (I would need your permission for the computer to be controlled.)" Store the answer with `scripts/config.mjs` and do not ask again; honour it until the user changes their mind. If they chose "you click", say when to click and wait.
 - If Connect cannot be set up, finish with the step-2 result and say that the in-Sibelius check was skipped and why.
 
