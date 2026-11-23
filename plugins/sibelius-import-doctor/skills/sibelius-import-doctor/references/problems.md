@@ -12,7 +12,8 @@ node scripts/doctor.mjs <score.musicxml|.xml|.mxl> <output folder> [options]
 |---|---|
 | `--mode pad` (default) / `--mode trim` | How to repair bars that hold too much music (see the first problem) |
 | `--composer "Name"` | Fill in the composer when the file has none. Only with a name the user gave; never guess |
-| `--no-tremolo`, `--no-unmeasured`, `--no-abbreviations` | Leave that kind of problem alone |
+| `--short-name "P1=Vln. 1"` (repeatable), `--short-names names.json` (`{"P1": "Vln. 1"}`) | Short names for parts that have none, keyed by part id. The assistant chooses them; the doctor never makes any up. `--short-name` wins over the file |
+| `--no-tremolo`, `--no-unmeasured` | Leave that kind of problem alone |
 | `--fill-short-bars` | Also fill bars that end early with rests. Sibelius does not need this; the original Python prototype always did it |
 | `--dry-run` | Only report; write nothing |
 
@@ -23,6 +24,7 @@ It prints one line of JSON: `found` (each problem kind with `fixed` true or fals
 - `bars-longer-than-time-signature`: pad mode kept these bars long so no note is lost. The music in them probably has one wrong note value; the user should compare those bars with the original.
 - `notes-removed`, `notes-shortened`: trim mode cut music at the bar line; the report lists part, bars and how many notes.
 - `composer-unknown`: ask the user for the composer and run again with `--composer`.
+- `short-names-missing`: parts without a short name (listed with part id and name). Choose names and run again with `--short-name` / `--short-names`.
 - `unusual-tremolo`: two-note tremolos written in a way that was not tested; left unchanged.
 
 Bar numbers are the numbers printed in the file (`<measure number>`), part names are the names in the file.
@@ -104,9 +106,9 @@ A four-bar cello excerpt was also exported from Sibelius to PDF before and after
 
 **In Sibelius.** The staff's short name is empty, so there is no instrument name to show at the start of later systems. Score B: 28 parts without a short name; in Sibelius 28 of its 29 staves had an empty short name.
 
-**The fix.** A short name is generated from the part name: common instrument names map to the usual abbreviations ("Violin 2" becomes "Vln. 2", "Horn in F 3" becomes "Hn. 3"; Chinese instrument names are covered too), and anything else becomes its first four letters plus a period. Existing short names are never changed. Score B after the fix: all 29 staves had a short name in Sibelius, and its re-export kept all 28. Sibelius was only checked for whether the names arrive, not for how good they are; the report lists every name added.
+**The fix.** The doctor only finds these parts (`missing-abbreviation`, with each part's id and name) and writes the short names it is given; it has no list of instrument names and never invents one. You choose the names: the conventional short form in the score's own language (the language its part names are written in), keeping player numbers ("Violin 2" → "Vln. 2"). Pass them by part id with `--short-name P1="Vln. 1"` or a `--short-names` JSON file. Without them nothing is added and the report says so. Existing short names are never changed. Score B with short names filled in: all 29 staves had a short name in Sibelius, and its re-export kept all 28. Sibelius only shows whether the names arrive, not whether they are good; the report lists every name added, and the user can change any of them in Sibelius.
 
-**Say to the user.** "None of the instruments had a short name, so Sibelius would show no names on the second page onward. I added the usual abbreviations (Vln. 1, Vc., …); you can change them in Sibelius."
+**Say to the user.** "None of the instruments had a short name, so Sibelius would show no names on the second page onward. I added the usual short names (Vln. 1, Vc., …); you can change them in Sibelius."
 
 ---
 

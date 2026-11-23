@@ -7,11 +7,11 @@
 // and prints one line of JSON describing what was found and done. Never changes the input file.
 // Exit code: 0 done (whether or not problems were found), 2 bad arguments or unreadable input.
 
-import { mkdirSync, realpathSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, writeFileSync, existsSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
-import { InputError, readScore } from "./lib/score.mjs";
+import { InputError, partNames, readScore } from "./lib/score.mjs";
 import { parse, serialize } from "./lib/xml.mjs";
 import { Fixer } from "./lib/fix.mjs";
 import { counts, problems } from "./lib/detect.mjs";
@@ -24,13 +24,39 @@ const HELP = `usage: node doctor.mjs <score> <output-folder> [options]
   --composer NAME      fill in the composer when the file has none
   --no-tremolo         leave two-note tremolos alone
   --no-unmeasured      leave unmeasured tremolos alone
-  --no-abbreviations   do not add missing short part names
+  --short-name ID=NAME short name for the part with that id, used only if it has none
+                       (repeatable; nothing is generated without it)
+  --short-names FILE   JSON object of short names by part id, e.g. {"P1": "Vln. 1"}
   --fill-short-bars    also fill bars that end early with rests (Sibelius does not need this)
   --dry-run            only report what would be fixed; write nothing
 `;
 
 function stemOf(path) {
   return basename(path).replace(/\.(musicxml|xml|mxl)$/i, "");
+}
+
+/** Short names from --short-names FILE, then --short-name ID=NAME (which wins). */
+function shortNamesFrom(values) {
+  const out = {};
+  if (values["short-names"]) {
+    let data;
+    try {
+      data = JSON.parse(readFileSync(resolve(values["short-names"]), "utf8"));
+    } catch (e) {
+      throw new InputError(`--short-names: cannot read ${values["short-names"]} as JSON (${e.message})`);
+    }
+    if (!data || typeof data !== "object" || Array.isArray(data)) throw new InputError('--short-names must hold a JSON object such as {"P1": "Vln. 1"}');
+    for (const [id, name] of Object.entries(data)) {
+      if (typeof name !== "string" || !name.trim()) throw new InputError(`--short-names: the short name for ${id} must be a non-empty string`);
+      out[id] = name.trim();
+    }
+  }
+  for (const s of values["short-name"]) {
+    const i = s.indexOf("=");
+    if (i < 1 || !s.slice(i + 1).trim()) throw new InputError(`--short-name must look like ID=NAME, e.g. "P1=Vln. 1" (got "${s}")`);
+    out[s.slice(0, i).trim()] = s.slice(i + 1).trim();
+  }
+  return out;
 }
 
 export function run(argv) {
@@ -42,7 +68,8 @@ export function run(argv) {
       composer: { type: "string" },
       "no-tremolo": { type: "boolean", default: false },
       "no-unmeasured": { type: "boolean", default: false },
-      "no-abbreviations": { type: "boolean", default: false },
+      "short-name": { type: "string", multiple: true, default: [] },
+      "short-names": { type: "string" },
       "fill-short-bars": { type: "boolean", default: false },
       "dry-run": { type: "boolean", default: false },
       help: { type: "boolean", short: "h", default: false },
@@ -58,13 +85,16 @@ export function run(argv) {
     mode: values.mode,
     tremolo: !values["no-tremolo"],
     unmeasured: !values["no-unmeasured"],
-    abbreviations: !values["no-abbreviations"],
+    shortNames: shortNamesFrom(values),
     composer: values.composer?.trim() || null,
     fillShortBars: values["fill-short-bars"],
   };
   const dryRun = values["dry-run"];
 
   const { doc, kind, inner } = readScore(input);
+  const ids = new Set(partNames(doc.root).map((p) => p.id));
+  const unknown = Object.keys(options.shortNames).filter((id) => !ids.has(id));
+  if (unknown.length) throw new InputError(`short name given for unknown part id(s): ${unknown.join(", ")} (part ids in this file: ${[...ids].join(", ")})`);
   const before = counts(doc.root);
   const found = problems(doc.root);
 
@@ -95,7 +125,7 @@ export function run(argv) {
   }
 
   const res = outcome({ before: found, after: afterProblems, log, mode: options.mode, options, dryRun });
-  const needs = dryRun ? [] : attention({ found: res, log, mode: options.mode, root: fixedRoot });
+  const needs = attention({ found: res, log, mode: options.mode, root: fixedRoot });
   const changes = changeCounts(log);
   const notesRemoved = log.reduce((s, c) => s + (c.deleted_noteheads ?? 0), 0);
   const rep = {
@@ -129,7 +159,7 @@ export function run(argv) {
     fixed: dryRun ? null : fixedPath,
     report: dryRun ? null : mdPath,
     report_json: dryRun ? null : jsonPath,
-    found: res.map((p) => ({ kind: p.kind, fixed: p.fixed, ...(p.where ? { where: p.where.map((w) => ({ part: w.part, bars: w.bars })) } : {}), ...(p.parts ? { parts: p.parts } : {}) })),
+    found: res.map((p) => ({ kind: p.kind, fixed: p.fixed, ...(p.where ? { where: p.where.map((w) => ({ part: w.part, bars: w.bars })) } : {}), ...(p.parts ? { parts: p.remaining ?? p.parts } : {}) })),
     changes,
     notes_removed: notesRemoved,
     needs_attention: needs.map((a) => a.kind),

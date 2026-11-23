@@ -19,7 +19,7 @@ Everything below runs with Node.js 22 or newer (this skill's `scripts/`). If Nod
 
 ## 2. Find the problems (no Sibelius needed)
 
-Run `node scripts/doctor.mjs <file> <output folder>` (it never changes the file; `--dry-run` only reports). It reports, in terms of parts and bar numbers, what Sibelius is known to mishandle. `references/problems.md` lists each kind, how it shows up in Sibelius, how it is fixed, and what we measured. Say plainly what was found and what will be changed, then fix. Where a fix involves a choice (for example trimming versus padding an overlong bar), pick the safer default, say which, and offer the other.
+Run `node scripts/doctor.mjs <file> <output folder>` (it never changes the file; `--dry-run` only reports). It reports, in terms of parts and bar numbers, what Sibelius is known to mishandle. `references/problems.md` lists each kind, how it shows up in Sibelius, how it is fixed, and what we measured. Say plainly what was found and what will be changed, then fix. Where a fix involves a choice (for example trimming versus padding an overlong bar), pick the safer default, say which, and offer the other. The doctor never invents short part names: for parts it reports without one, choose conventional short names in the score's own language and pass them in (`--short-name`); the user can change them in Sibelius.
 
 Outputs, always as copies: the fixed MusicXML and a short report of what changed and what did not. Never claim the file is perfect; report only what can be checked.
 

@@ -101,7 +101,7 @@ export function problems(root) {
   const unm = tr.filter((t) => t.type === "unmeasured");
   if (unm.length) out.push({ kind: "unmeasured-tremolo", notes: unm.length, where: byPart(unm.map((t) => [t.part, t.number]), names) });
   const noAbbr = parts.filter((p) => !p.abbr);
-  if (noAbbr.length) out.push({ kind: "missing-abbreviation", parts: noAbbr.map((p) => p.name || p.id) });
+  if (noAbbr.length) out.push({ kind: "missing-abbreviation", parts: noAbbr.map((p) => ({ id: p.id, name: p.name })) });
   const composer = [...iter(root, "creator")].find((c) => attr(c, "type") === "composer");
   if (!composer || !(text(composer) ?? "").trim()) out.push({ kind: "missing-composer" });
   return out;

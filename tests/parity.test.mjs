@@ -4,8 +4,8 @@
 // produced with: Fixer(tree, mode=<mode>, abbreviations=False, composer="Test Composer") and
 // tree.write(xml_declaration=True, encoding="UTF-8", doctype=tree.docinfo.doctype) (lxml).
 // Comparison is byte for byte. The prototype always padded short bars, so the port runs with
-// fillShortBars here; abbreviations are off because the prototype only knew Chinese names
-// (the port adds English ones and is checked separately in doctor.test.mjs).
+// fillShortBars here. The prototype's generated short names were switched off for these files;
+// the port never generates short names (it only applies ones it is given).
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -20,7 +20,7 @@ for (const name of ["overlong", "piano-two-staves", "tremolos"]) {
   for (const mode of ["trim", "pad"]) {
     test(`${name} (${mode}) matches the Python prototype byte for byte`, () => {
       const { doc } = readScore(fixture(name));
-      const fx = new Fixer(doc, { mode, abbreviations: false, composer: "Test Composer", fillShortBars: true });
+      const fx = new Fixer(doc, { mode, composer: "Test Composer", fillShortBars: true });
       const log = fx.run();
       assert.equal(serialize(doc), read(join(PYTHON, `${name}.${mode}.musicxml`)));
       const expected = JSON.parse(read(join(PYTHON, `${name}.${mode}.changes.json`)));

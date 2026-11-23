@@ -12,7 +12,6 @@ import {
   kids, find, findText, text, setText, attr, setAttr, iter, make, sub, append, remove,
   addNext, addPrevious, insertFirst, nextSibling,
 } from "./xml.mjs";
-import { abbreviate } from "./abbreviations.mjs";
 
 const BASE = [
   ["breve", new Frac(8)], ["whole", new Frac(4)], ["half", new Frac(2)], ["quarter", new Frac(1)],
@@ -100,11 +99,11 @@ function walk(m) {
 const voiceKey = (v) => (/^\d+$/.test(v) ? Number(v) : 99);
 
 export class Fixer {
-  constructor(doc, { mode = "pad", tremolo = true, unmeasured = true, abbreviations = true, composer = null, fillShortBars = false } = {}) {
+  constructor(doc, { mode = "pad", tremolo = true, unmeasured = true, shortNames = {}, composer = null, fillShortBars = false } = {}) {
     this.doc = doc;
     this.root = doc.root;
     this.mode = mode;
-    this.opts = { tremolo, unmeasured, abbreviations, composer, fillShortBars };
+    this.opts = { tremolo, unmeasured, shortNames, composer, fillShortBars };
     this.log = [];
     this.warnings = [];
   }
@@ -375,22 +374,27 @@ export class Fixer {
   // ---------- metadata ----------
   fixMetadata() {
     const root = this.root;
-    if (this.opts.abbreviations) {
-      for (const sp of iter(root, "score-part")) {
-        let ab = find(sp, "part-abbreviation");
-        if (ab && (text(ab) ?? "").trim()) continue;
-        const name = (findText(sp, "part-name") ?? "").trim();
-        const val = abbreviate(name);
-        if (!val) continue;
-        if (!ab) {
-          const anchor = find(sp, "part-name-display") ?? find(sp, "part-name");
-          if (!anchor) continue;
-          ab = make("part-abbreviation");
-          addNext(anchor, ab);
-        }
-        setText(ab, val);
-        this.log.push({ part: attr(sp, "id"), fix: "abbreviation", name, abbreviation: val });
+    // Short names are never generated here: the caller supplies them ({ partId: "Vln. 1" }).
+    const given = this.opts.shortNames ?? {};
+    for (const sp of iter(root, "score-part")) {
+      const pid = attr(sp, "id");
+      if (!(pid in given)) continue;
+      const val = String(given[pid]).trim();
+      if (!val) continue;
+      let ab = find(sp, "part-abbreviation");
+      const name = (findText(sp, "part-name") ?? "").trim();
+      if (ab && (text(ab) ?? "").trim()) {
+        this.warnings.push(`${pid} (${name}) already has the short name "${text(ab).trim()}"; the given "${val}" was not applied`);
+        continue;
       }
+      if (!ab) {
+        const anchor = find(sp, "part-name-display") ?? find(sp, "part-name");
+        if (!anchor) continue;
+        ab = make("part-abbreviation");
+        addNext(anchor, ab);
+      }
+      setText(ab, val);
+      this.log.push({ part: pid, fix: "abbreviation", name, abbreviation: val });
     }
     const comp = this.opts.composer;
     if (comp) {

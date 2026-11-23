@@ -7,8 +7,7 @@ import { join } from "node:path";
 import { DOCTOR, SCRIPTS, fixture, read, tmp, zip } from "./helpers.mjs";
 
 const { analyse, readScore } = await import(join(SCRIPTS, "lib", "score.mjs"));
-const { parse, iter, find, findText, attr, text } = await import(join(SCRIPTS, "lib", "xml.mjs"));
-const { abbreviate } = await import(join(SCRIPTS, "lib", "abbreviations.mjs"));
+const { parse, iter, find, findText, attr, text, kids } = await import(join(SCRIPTS, "lib", "xml.mjs"));
 
 function doctor(args) {
   const r = spawnSync(process.execPath, [DOCTOR, ...args], { encoding: "utf8" });
@@ -119,22 +118,60 @@ test("the tremolo fixes can be switched off", () => {
   assert.deepEqual(out.found.filter((p) => p.kind.includes("tremolo")).map((p) => p.fixed), [false, false]);
 });
 
-test("missing short names are added; an existing one is kept", () => {
-  const { out } = doctor([fixture("overlong"), tmp()]);
+test("parts without a short name are reported, and nothing is made up", () => {
+  const { out } = doctor([fixture("tremolos"), tmp()]);
+  const p = out.found.find((x) => x.kind === "missing-abbreviation");
+  assert.equal(p.fixed, false);
+  assert.deepEqual(p.parts, [{ id: "P1", name: "Violoncello" }, { id: "P2", name: "Timpani" }]);
+  assert.ok(out.needs_attention.includes("short-names-missing"));
+  assert.equal(out.changes.abbreviation, undefined);
   const root = fixedRoot(out);
-  const abbr = [...iter(root, "score-part")].map((sp) => findText(sp, "part-abbreviation"));
-  assert.deepEqual(abbr, ["Fl.", "Vln. 1"]);
-  const t = fixedRoot(doctor([fixture("tremolos"), tmp()]).out);
-  assert.deepEqual([...iter(t, "score-part")].map((sp) => findText(sp, "part-abbreviation")), ["Vc.", "Timp."]);
+  assert.deepEqual([...iter(root, "score-part")].map((sp) => find(sp, "part-abbreviation")), [null, null]);
+  assert.match(read(out.report), /no short names were given/);
 });
 
-test("abbreviations for common English names, player numbers kept", () => {
-  const cases = {
-    "Violin 2": "Vln. 2", "Violoncello": "Vc.", "Double Bass": "Cb.", "Bass Clarinet in Bb": "B. Cl.",
-    "Horn in F 3": "Hn. 3", "Contrabassoon": "Cbsn.", "Alto Saxophone": "A. Sax.", "Soprano": "S.",
-    "Bass": "B.", "Piano": "Pno.", "Theremin": "Ther.", "Kazoo 1": "Kazo. 1", "": "",
-  };
-  for (const [name, want] of Object.entries(cases)) assert.equal(abbreviate(name), want, name);
+test("--short-name applies the given names right after the part name", () => {
+  const { out } = doctor([fixture("tremolos"), tmp(), "--short-name", "P1=Vc.", "--short-name", "P2 = Timp."]);
+  assert.equal(out.found.find((x) => x.kind === "missing-abbreviation").fixed, true);
+  assert.equal(out.changes.abbreviation, 2);
+  assert.ok(!out.needs_attention.includes("short-names-missing"));
+  const sp = [...iter(fixedRoot(out), "score-part")];
+  assert.deepEqual(sp.map((s) => findText(s, "part-abbreviation")), ["Vc.", "Timp."]);
+  assert.deepEqual(kids(sp[0]).map((e) => e.name), ["part-name", "part-abbreviation"]);
+});
+
+test("--short-names reads a JSON file; --short-name wins over it; some parts may stay without", () => {
+  const dir = tmp();
+  const f = join(dir, "names.json");
+  writeFileSync(f, JSON.stringify({ P1: "Vlc.", P2: "Pk." }));
+  const both = doctor([fixture("tremolos"), dir, "--short-names", f, "--short-name", "P1=Vc."]).out;
+  assert.deepEqual([...iter(fixedRoot(both), "score-part")].map((s) => findText(s, "part-abbreviation")), ["Vc.", "Pk."]);
+  writeFileSync(f, JSON.stringify({ P2: "Timp." }));
+  const partial = doctor([fixture("tremolos"), tmp(), "--short-names", f]).out;
+  const p = partial.found.find((x) => x.kind === "missing-abbreviation");
+  assert.equal(p.fixed, false);
+  assert.deepEqual(p.parts, [{ id: "P1", name: "Violoncello" }]);
+  assert.ok(partial.needs_attention.includes("short-names-missing"));
+});
+
+test("an existing short name is never replaced", () => {
+  const { out } = doctor([fixture("overlong"), tmp(), "--short-name", "P1=Fl.", "--short-name", "P2=V1"]);
+  const root = fixedRoot(out);
+  assert.deepEqual([...iter(root, "score-part")].map((sp) => findText(sp, "part-abbreviation")), ["Fl.", "Vln. 1"]);
+  assert.equal(out.warnings.length, 1);
+  assert.match(out.warnings[0], /P2.*already has the short name "Vln. 1"/);
+});
+
+test("bad short-name arguments stop with exit code 2", () => {
+  const dir = tmp();
+  for (const args of [["--short-name", "P9=X."], ["--short-name", "P1"], ["--short-name", "P1="], ["--short-names", join(dir, "missing.json")]]) {
+    const r = doctor([fixture("tremolos"), dir, ...args]);
+    assert.equal(r.code, 2, args.join(" "));
+    assert.equal(r.out.ok, false);
+  }
+  const f = join(dir, "list.json");
+  writeFileSync(f, '["Vc."]');
+  assert.equal(doctor([fixture("tremolos"), dir, "--short-names", f]).code, 2);
 });
 
 test("composer: reported when missing, filled only when given", () => {
@@ -193,6 +230,7 @@ test("--dry-run reports and writes nothing", () => {
   assert.equal(out.fixed, null);
   assert.equal(existsSync(dir), false);
   assert.deepEqual(out.found.map((p) => p.kind), ["two-note-tremolo", "unmeasured-tremolo", "missing-abbreviation", "missing-composer"]);
+  assert.deepEqual(out.needs_attention, ["short-names-missing", "composer-unknown"]);
 });
 
 test("bad input: one line of JSON with ok false and exit code 2", () => {

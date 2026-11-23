@@ -51,11 +51,16 @@ export function outcome({ before, after, log, mode, options, dryRun }) {
         r.fixed = options.unmeasured && !afterKinds.has("unmeasured-tremolo");
         r.how = options.unmeasured ? "replaced by an ordinary three-stroke tremolo" : "left unchanged (unmeasured-tremolo fix switched off)";
         break;
-      case "missing-abbreviation":
-        r.fixed = options.abbreviations && !afterKinds.has("missing-abbreviation");
-        r.how = options.abbreviations ? "short names added" : "left unchanged (abbreviation fix switched off)";
-        if (options.abbreviations) r.added = log.filter((c) => c.fix === "abbreviation").map((c) => ({ part: c.name, abbreviation: c.abbreviation }));
+      case "missing-abbreviation": {
+        r.added = log.filter((c) => c.fix === "abbreviation").map((c) => ({ id: c.part, part: c.name, abbreviation: c.abbreviation }));
+        const left = after.find((a) => a.kind === "missing-abbreviation")?.parts ?? [];
+        r.fixed = left.length === 0;
+        if (!r.added.length) r.how = "no short names were given, so none were added: supply them with --short-name ID=Name or --short-names file.json";
+        else if (r.fixed) r.how = "the given short names were added";
+        else r.how = `the given short names were added; ${left.length} part(s) still have none`;
+        if (left.length) r.remaining = left;
         break;
+      }
       case "missing-composer":
         r.fixed = !afterKinds.has("missing-composer");
         r.how = r.fixed ? `composer set to "${options.composer}"` : "needs the composer's name: run again with --composer";
@@ -98,6 +103,7 @@ export function attention({ found, log, mode, root }) {
   }
   for (const p of found) {
     if (p.kind === "missing-composer" && !p.fixed) out.push({ kind: "composer-unknown", message: "The file has no composer. Ask for the name and run again with --composer \"Name\"." });
+    if (p.kind === "missing-abbreviation" && !p.fixed) out.push({ kind: "short-names-missing", message: "These parts have no short name. Choose conventional short names in the score's own language and run again with --short-name ID=Name (or --short-names file.json); the user can change them in Sibelius.", parts: p.remaining ?? p.parts });
     if (p.kind === "two-note-tremolo-unusual") out.push({ kind: "unusual-tremolo", message: "Two-note tremolos written in an untested way were left unchanged.", where: p.where });
   }
   return out;
@@ -132,8 +138,8 @@ export function markdown(rep) {
   for (const p of rep.found) {
     L.push(`## ${p.fixed ? "Fixed" : "Not fixed"}: ${p.kind.replace(/-/g, " ")}`, "", WHAT[p.kind] ?? "", "");
     for (const w of where(p)) L.push(`- ${w}`);
-    if (p.parts) L.push(`- Parts: ${p.parts.join(", ")}`);
-    if (p.added?.length) L.push(`- Added: ${p.added.map((a) => `${a.part} → ${a.abbreviation}`).join(", ")}`);
+    if (p.parts) L.push(`- Parts: ${p.parts.map((x) => (x.name ? `${x.name} (${x.id})` : x.id)).join(", ")}`);
+    if (p.added?.length) L.push(`- Added: ${p.added.map((a) => `${a.part || a.id} → ${a.abbreviation}`).join(", ")}`);
     L.push("", `What was done: ${p.how}.`, "");
   }
   if (rep.needs_attention.length) {
@@ -142,6 +148,7 @@ export function markdown(rep) {
       L.push(`- ${a.message}`);
       for (const w of a.where ?? []) L.push(`  - ${w.part}: bar${w.bars.length > 1 ? "s" : ""} ${w.bars.join(", ")}${w.notes ? ` (${w.notes} note${w.notes > 1 ? "s" : ""})` : ""}`);
       if (a.bars) L.push(`  - Bars ${a.bars.join(", ")}`);
+      if (a.parts) L.push(`  - ${a.parts.map((x) => (x.name ? `${x.name} (${x.id})` : x.id)).join(", ")}`);
     }
     L.push("");
   }
