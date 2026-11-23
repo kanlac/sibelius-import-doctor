@@ -26,7 +26,7 @@ import zlib from "node:zlib";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { getSetting } from "./config.mjs";
-import { PLUGIN_NAME, PLUGIN_VERSION, pluginStatus, sibeliusRunning } from "./plugin/install.mjs";
+import { PLUGIN_NAME, PLUGIN_VERSION, compareVersions, pluginStatus, sibeliusRunning } from "./plugin/install.mjs";
 
 const TESTED = { year: 26, month: 11, label: "26.11" };
 const CLIENT_NAME = "Sibelius Import Doctor";
@@ -253,6 +253,7 @@ export function analyseScore(root) {
         single: f.partTrem.single.size,
         double: f.partTrem.double.size,
         tuplets: f.tuplets.size,
+        fill: Math.round(f.fill),
       })),
     });
   }
@@ -345,7 +346,24 @@ function tupletRounding(cells, nStaves, b) {
 }
 
 function barLengthShort(sib, intended) {
-  return `bar lasts ${quarters(sib)} quarters (file ${quarters(intended)})`;
+  return `bar lasts ${quarters(sib)} quarters in Sibelius (file ${quarters(intended)})`;
+}
+
+function barLengthExplain(sib, intended) {
+  return sib < intended ? "Sibelius cut the bar; compare the rhythm with the original" : "Sibelius lengthened the bar; compare the rhythm with the original";
+}
+
+// The staves a bar-length difference belongs to: parts whose music in the file reaches the length the
+// bar should have (they set it) when that differs from the time signature; otherwise parts whose music
+// in Sibelius ends somewhere other than the file's bar end; otherwise the first staff with notes.
+function barLengthStaves(xml, cells, overflow, b, bar) {
+  const setters = xml.parts.filter((p) => p.bars[b - 1] && p.bars[b - 1].fill === bar.intended && bar.intended !== bar.expected);
+  if (setters.length) return setters.map((p) => ({ staff: p.staves[0], part: p.name }));
+  const spill = xml.parts.filter((p) => p.staves.some((s) => overflow.has(`${s}:${b}`)));
+  if (spill.length) return spill.map((p) => ({ staff: p.staves.find((s) => overflow.has(`${s}:${b}`)), part: p.name }));
+  const withNotes = xml.parts.find((p) => p.staves.some((s) => (cells.get(`${s}:${b}`) || { heads: 0 }).heads > 0));
+  const p = withNotes || xml.parts[0];
+  return p ? [{ staff: p.staves.find((s) => (cells.get(`${s}:${b}`) || { heads: 0 }).heads > 0) || p.staves[0], part: p.name }] : [{ staff: 1, part: null }];
 }
 
 // Compare one imported file with its MusicXML. Returns totals and a list of bars that look wrong.
@@ -380,7 +398,7 @@ export function compare(xml, info, rows, barLengths) {
       if (got.tuplets < (want.tuplets || 0)) {
         const n = want.tuplets - got.tuplets;
         let short = `tuplet lost (${plural(n, "note")})`;
-        if (lengthOff && !lengthExplained) { short += `, ${barLengthShort(sibLen, bar.intended)}`; lengthExplained = true; }
+        if (lengthOff && !lengthExplained) { short += `, ${barLengthShort(sibLen, bar.intended).replace(" in Sibelius", "")}`; lengthExplained = true; }
         const tupStaff = got.per.reduce((best, x) => (x.c.tuplets < best.c.tuplets ? x : best), got.per[0]).s;
         problems.push(finding({ staff: tupStaff, bar: b, measure: label, part: part.name }, "tuplet-lost", short, "plain notes in Sibelius, rhythm off"));
       }
@@ -391,7 +409,9 @@ export function compare(xml, info, rows, barLengths) {
         if (voices) problems.push(finding(cell, "voice-overflow", `voice ${voices.join(" and ")} runs past the bar line`, "too many beats"));
       }
     }
-    if (lengthOff && !lengthExplained) problems.push(finding({ staff: 1, bar: b, measure: label, part: xml.parts[0]?.name }, "bar-length", barLengthShort(sibLen, bar.intended), "check the rhythm"));
+    if (lengthOff && !lengthExplained) {
+      for (const at of barLengthStaves(xml, cells, overflow, b, bar)) problems.push(finding({ ...at, bar: b, measure: label }, "bar-length", barLengthShort(sibLen, bar.intended), barLengthExplain(sibLen, bar.intended)));
+    }
   }
   // What Sibelius holds in bars with a length or tuplet problem, kept in the details for diagnosis.
   const flagged = new Set(problems.filter((p) => p.kind === "bar-length" || p.kind === "tuplet-lost").map((p) => p.bar));
@@ -463,7 +483,36 @@ function fromDoctorReport(raw) {
     const [short, explain, level] = UNFIXED_TEXT[p.kind] || [`${String(p.kind).replace(/-/g, " ")} not fixed`, "", 2];
     for (const w of p.where) for (const bar of w.bars || []) unfixed.push({ part: w.part_id ?? w.part, measure: bar, staff: 1, kind: p.kind, short, explain, level, text: explain ? `${short}: ${explain}` : short });
   }
-  return { changed, unfixed, harmless };
+  return { changed, unfixed, harmless, attention: attentionItems(raw) };
+}
+
+// Bars the doctor tells the user to look at (its needs_attention list) are always commented, at
+// level 2, even where the change itself was harmless (an overlong bar kept long by padding with rests).
+// A finding listed here replaces the doctor's level-1 change of the same bar ("supersedes").
+const ATTENTION_TEXT = {
+  "bars-longer-than-time-signature": ["bar longer than the time signature", "one note value is probably wrong; compare with the original", []],
+  "notes-removed": ["notes past the bar line removed", "compare with the original", ["trim-delete"]],
+};
+const ATTENTION_COVERED = new Set(["notes-shortened", "unusual-tremolo", "composer-unknown", "short-names-missing"]);
+
+function attentionItems(raw) {
+  const out = [];
+  const overlongParts = new Map(); // printed bar number -> part ids the doctor found running long there
+  for (const p of raw.found || []) {
+    if (p.kind !== "overlong-bar" || !p.where) continue;
+    for (const w of p.where) for (const bar of w.bars || []) overlongParts.set(String(bar), [...(overlongParts.get(String(bar)) || []), w.part_id ?? w.part]);
+  }
+  for (const a of raw.needs_attention || []) {
+    if (ATTENTION_COVERED.has(a.kind)) continue;
+    const [short, explain, supersedes] = ATTENTION_TEXT[a.kind] || [String(a.kind).replace(/-/g, " "), "see the report", []];
+    const base = { kind: a.kind, short, explain, level: 2, supersedes, text: a.message || short };
+    for (const w of a.where || []) for (const bar of w.bars || []) out.push({ ...base, part: w.part_id ?? w.part, measure: bar, staff: 1 });
+    for (const bar of a.bars || []) {
+      const parts = overlongParts.get(String(bar)) || [null];
+      for (const part of parts) out.push({ ...base, part, measure: bar, staff: 1 });
+    }
+  }
+  return out;
 }
 
 const LIST_KEYS = { changed: ["changed", "changes", "fixed", "fixes"], unfixed: ["unfixed", "notFixed", "not_fixed", "remaining"] };
@@ -482,11 +531,12 @@ export function loadChanges(file) {
     level: [1, 2, 3].includes(e.level) ? e.level : undefined,
   });
   const keep = (list) => list.filter((e) => !e.harmless).map(norm);
-  return { changed: keep(pick(LIST_KEYS.changed)), unfixed: keep(pick(LIST_KEYS.unfixed)), harmless: all.filter((e) => e.harmless).length };
+  return { changed: keep(pick(LIST_KEYS.changed)), unfixed: keep(pick(LIST_KEYS.unfixed)), harmless: all.filter((e) => e.harmless).length, attention: [] };
 }
 
+// A null part means "the whole score" and lands on the first staff.
 export function locate(xml, e) {
-  const staffIdx = xml.staves.findIndex((s) => (s.part === e.part || s.name === e.part) && s.staffInPart === e.staff);
+  const staffIdx = e.part == null ? 0 : xml.staves.findIndex((s) => (s.part === e.part || s.name === e.part) && s.staffInPart === e.staff);
   let bar = e.measureIndex ? Number(e.measureIndex) : xml.bars.findIndex((b) => String(b.number) === String(e.measure)) + 1;
   if (staffIdx < 0 || !(bar >= 1 && bar <= xml.bars.length)) return null;
   return { staff: staffIdx + 1, bar, measure: xml.bars[bar - 1].number, part: xml.staves[staffIdx].name };
@@ -509,7 +559,7 @@ const LEVEL = {
 };
 export function levelOf(it) {
   if (it.source === "changed") return 1;
-  if (it.source === "unfixed") return it.level || LEVEL.unfixed;
+  if (it.source === "unfixed" || it.source === "attention") return it.level || 2;
   return LEVEL[it.kind] || 2;
 }
 
@@ -538,8 +588,10 @@ export function buildComments(items) {
       // A note count against the user's file that says the same as the import finding is dropped.
       const all = [...g.findings.values()];
       const importCounts = all.filter((f) => f.kind === "notes-missing" || f.kind === "notes-extra");
+      const superseded = new Set(all.flatMap((f) => f.supersedes || []));
       const findings = all
         .filter((f) => !(f.kind === "differs-from-original" && importCounts.some((x) => x.file === f.file && x.sib === f.sib)))
+        .filter((f) => !(f.source === "changed" && superseded.has(f.kind)))
         .sort((a, b) => b.level - a.level);
       const level = Math.max(...findings.map((f) => f.level));
       const parts = findings.map((f) => {
@@ -794,7 +846,7 @@ const wakeScreen = () => osa(["-e", WAKE_SCRIPT]);
 
 // agent-clicks: keep looking for the box until the import returns. After 30 s without success the user
 // is asked too, and whoever is first wins.
-async function pressImportOk(open, isDone, asked) {
+async function pressImportOk(open, isDone, cannotClick) {
   const t0 = Date.now();
   let misses = 0, askedUser = false;
   while (!isDone()) {
@@ -804,29 +856,37 @@ async function pressImportOk(open, isDone, asked) {
     debug(`import box: ${r}`);
     if (r === "clicked") { say("Clicked OK on the import options box."); return; }
     if (r === "no-permission") {
-      emit({ event: "accessibility-needed", say: "macOS did not let the assistant click in Sibelius. To allow it: System Settings > Privacy & Security > Accessibility, turn on the app your assistant runs in (and allow it to control System Events under Automation if asked). For now, please click OK yourself." });
-      asked();
+      cannotClick("accessibility-permission");
       return;
     }
     misses += 1;
     if (r === "no-windows" || misses % 3 === 0) await wakeScreen();
-    if (!askedUser && Date.now() - t0 > 30000) { askedUser = true; asked(); }
+    if (!askedUser && Date.now() - t0 > 30000) { askedUser = true; cannotClick("box-not-found"); }
     await sleep(1000);
   }
 }
+
+const CANNOT_CLICK_SAY = {
+  "accessibility-permission": "I can't click in Sibelius for you yet: macOS needs your permission. Please click OK in Sibelius' import box now. To let me do it next time, open System Settings > Privacy & Security > Accessibility and switch on the app I run in.",
+  "box-not-found": "I can't find Sibelius' import box to click it. Please click OK in Sibelius yourself.",
+  "not-macos": "Clicking for you only works on macOS. Please click OK in Sibelius' import box.",
+};
 
 async function importFile(sess, file, mode) {
   const label = path.basename(file);
   say(`Importing ${label} into Sibelius...`);
   const asked = () => emit({ event: "waiting", for: "import-ok", file, say: `Sibelius is showing its MusicXML import options for "${label}". Please click OK.` });
+  // agent-clicks could not click: one unmistakable event with a sentence to pass on, then the usual wait.
+  const cannotClick = (reason) => {
+    emit({ event: "agent-cannot-click", reason, file, say: CANNOT_CLICK_SAY[reason] });
+    asked();
+  };
   const open = sess.plugin("OpenFile", [path.resolve(file)], 900000);
   let done = false;
   open.then(() => (done = true), () => (done = true));
-  if (mode === "agent-clicks" && process.platform === "darwin") await pressImportOk(open, () => done, asked);
-  else {
-    if (mode === "agent-clicks") say("Clicking for you works only on macOS; asking the user instead.");
-    asked();
-  }
+  if (mode === "agent-clicks" && process.platform === "darwin") await pressImportOk(open, () => done, cannotClick);
+  else if (mode === "agent-clicks") cannotClick("not-macos");
+  else asked();
   const ok = await open;
   if (!ok) throw new Fail("import-failed", `Sibelius did not open ${label} (the import was cancelled or the file could not be read).`, "Run again and click OK on the import box; if it keeps failing, Sibelius cannot read this file.");
 }
@@ -859,10 +919,10 @@ async function importAndRead(sess, file, mode, timings) {
 
 export function doctorItems(changes, xml, unplaced = []) {
   const items = [];
-  for (const source of ["changed", "unfixed"]) {
-    for (const e of changes ? changes[source] : []) {
+  for (const source of ["changed", "unfixed", "attention"]) {
+    for (const e of changes ? changes[source] || [] : []) {
       const at = e.text ? locate(xml, e) : null;
-      if (at) items.push({ ...at, source, kind: e.kind, short: e.short || e.text, explain: e.explain, count: e.count, level: e.level, text: e.text });
+      if (at) items.push({ ...at, source, kind: e.kind, short: e.short || e.text, explain: e.explain, count: e.count, level: e.level, supersedes: e.supersedes, text: e.text });
       else unplaced.push({ source, ...e });
     }
   }
@@ -889,7 +949,7 @@ async function check(opts) {
   emit({ event: "connected" });
   try {
     const ping = await sess.plugin("Ping");
-    if (ping.plugin !== PLUGIN_VERSION) throw new Fail("plugin-outdated", `Sibelius has plug-in version ${ping.plugin}, this check needs ${PLUGIN_VERSION}.`, "Run scripts/plugin/install.mjs, then quit and reopen Sibelius.");
+    if (compareVersions(String(ping.plugin), PLUGIN_VERSION) < 0) throw new Fail("plugin-outdated", `Sibelius has plug-in version ${ping.plugin}, this check needs ${PLUGIN_VERSION} or newer.`, "Run scripts/plugin/install.mjs, then quit and reopen Sibelius.");
     const timings = {};
     const report = { sibelius: { ...install, programVersion: ping.programVersion }, importDialog: mode, timings };
     if (opts.original) {
@@ -919,8 +979,17 @@ async function check(opts) {
     report.comments = comments;
     const details = path.join(outDir, `${stem}.sibelius-check.json`);
     fs.writeFileSync(details, JSON.stringify(report, null, 1) + "\n");
+    const eyes = [...needsEyes].sort((a, b) => b.level - a.level || a.bar - b.bar);
     return {
       event: "done",
+      // What the assistant's first sentence needs.
+      headline: {
+        notesLostImportingOriginal: report.original ? report.original.lost : null,
+        notesLostAfterFix: c.lost,
+        barsNeedingEyes: needsEyes.length,
+        seriousBars: comments.filter((g) => g.level === 3).length,
+        barsChangedNothingToDo: comments.length - needsEyes.length,
+      },
       sib: fs.existsSync(sib) ? sib : null,
       details,
       sibelius: install.release,
@@ -936,7 +1005,7 @@ async function check(opts) {
         harmlessChangesNotCommented: changes ? changes.harmless : 0,
         doctorEntriesNotPlaced: unplaced.length,
       },
-      firstNeedingEyes: [...needsEyes].sort((a, b) => b.level - a.level || a.bar - b.bar).slice(0, 20).map((g) => ({ part: g.part ?? null, measure: g.measure, level: g.level, text: g.text })),
+      barsNeedingEyes: eyes.slice(0, 100).map((g) => ({ part: g.part ?? null, measure: g.measure, level: g.level, text: g.text })),
     };
   } finally {
     sess.close();

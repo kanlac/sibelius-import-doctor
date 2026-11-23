@@ -33,12 +33,12 @@ This is step 3 of SKILL.md. `scripts/connect.mjs` opens the user's original and 
    | `waiting`, `for: "sibelius-busy"` | Sibelius has a dialog open: ask the user to close it |
    | `connected` | approved |
    | `waiting`, `for: "import-ok"` | the import options box is up: ask the user to click OK |
-   | `accessibility-needed` | agent-clicks was chosen but macOS refused; see below. The run continues and waits for the user's OK |
+   | `agent-cannot-click` | agent-clicks was chosen but the click is not possible: `reason` is `accessibility-permission` (macOS refused; see below), `box-not-found` (nothing found within 30 s; it keeps trying) or `not-macos`. Pass its `say` sentence on: the user must click OK now. A `waiting` / `import-ok` line follows |
    | `done` | finished; exit code 0 |
    | `error` | `code`, `message`, `hint`; exit code 1 |
 
    Each waiting event carries a `say` sentence you can pass on.
-8. The `done` line has the `.sib` path, the JSON details path (`<fixed name>.sibelius-check.json`), note totals for the original and the fixed import (`xmlNotes`, `sibeliusNotes`, `lost`, `gained`, and `movedBetweenStaves`, which is informational), `differsFromOriginalBars`, and `comments`: how many bars got a comment, how many per level (`byLevel`), how many were only changed and need nothing from the user (`changedNothingToDo`, level 1), how many need the user's eyes (`needYourEyes`, levels 2 and 3), how many harmless rest-only changes were left uncommented, plus the first bars needing eyes (most serious first) with part name, bar number and level. Lead with that in plain words.
+8. The `done` line starts with `headline`, the numbers for your first sentence: `notesLostImportingOriginal` (what Sibelius dropped from the untouched file; null without `--original`), `notesLostAfterFix`, `barsNeedingEyes`, `seriousBars` (level 3) and `barsChangedNothingToDo`. `barsNeedingEyes` (up to 100, most serious first) lists each with part name, bar number, level and the comment text. It also has the `.sib` path, the JSON details path (`<fixed name>.sibelius-check.json`), note totals for the original and the fixed import (`xmlNotes`, `sibeliusNotes`, `lost`, `gained`, and `movedBetweenStaves`, which is informational), `differsFromOriginalBars`, and `comments`: how many bars got a comment, how many per level (`byLevel`), how many were only changed and need nothing from the user (`changedNothingToDo`, level 1), how many need the user's eyes (`needYourEyes`, levels 2 and 3), and how many harmless rest-only changes were left uncommented. Lead with the headline in plain words.
 
 ## The connection box (approval)
 
@@ -54,14 +54,14 @@ Opening MusicXML makes Sibelius show "Open MusicXML File" with import options. T
 
 - **user-clicks**: the script emits `waiting` / `import-ok` and waits (up to 15 minutes per file). Tell the user to click OK.
 - **agent-clicks** (macOS only): the script presses OK through macOS Accessibility (`osascript` and System Events), with the box's current options. The checkboxes in that box are not exposed to Accessibility, so whatever the user last chose there is used. It looks in every Sibelius window whose title contains "MusicXML" (the box is "Open MusicXML File"; its OK button sits inside a group of the window) and keeps trying until the import returns. When Accessibility sees no Sibelius windows at all, and every few misses, it presses Shift to wake a screen saver. After 30 seconds without success (for example a Sibelius in another language, where the title differs) it also asks the user to click OK, and keeps trying meanwhile.
-  - The first time, macOS asks: "*<your assistant's app>* would like to control this computer using accessibility features" with Open System Settings / Deny. The user grants it in System Settings > Privacy & Security > Accessibility by switching on the app your assistant runs in (Terminal, iTerm, the Claude or Codex app...). macOS may also ask to let it control "System Events" (Automation). Until then osascript fails with error -25211 ("not allowed assistive access"); the script emits `accessibility-needed` and waits for the user to click OK instead.
+  - The first time, macOS asks: "*<your assistant's app>* would like to control this computer using accessibility features" with Open System Settings / Deny. The user grants it in System Settings > Privacy & Security > Accessibility by switching on the app your assistant runs in (Terminal, iTerm, the Claude or Codex app...). macOS may also ask to let it control "System Events" (Automation). Until then osascript fails with error -25211 ("not allowed assistive access"); the script emits `agent-cannot-click` with reason `accessibility-permission` and waits for the user to click OK instead.
   - On Windows the script always asks the user.
 
 Human clicks per run: user-clicks = 1 approval + 1 OK per imported file (3 with `--original`); agent-clicks = 1 (the approval).
 
 ## What the comments say
 
-Comments go only where the music changed (notes or tremolos), where something could not be fixed, or where Sibelius shows something different from the user's file. Harmless rest-only normalisations (a whole-bar rest set to the length of the bar, rests added so a part fills its bar) are counted but never commented; without that, a 38-bar orchestral score got 299 comments, 253 of them about rest lengths.
+Comments go only where the music changed (notes or tremolos), where something could not be fixed, or where Sibelius shows something different from the user's file. Harmless rest-only normalisations (a whole-bar rest set to the length of the bar, rests added so a part fills its bar) are counted but never commented; without that, a 38-bar orchestral score got 299 comments, 253 of them about rest lengths. That rule never hides a bar the doctor tells the user to look at: every bar in the doctor's `needs_attention` list gets a level-2 comment. In pad mode, the bars it kept longer than the time signature (padding the other parts with rests) are commented on each part that runs long there: `Doctor 2: bar longer than the time signature: one note value is probably wrong; compare with the original`. In trim mode, notes it removed past a bar line are level 2 ("compare with the original") instead of a level-1 change.
 
 One comment per staff and bar, signed "Doctor", graded, and as short as it can be while saying what and how much:
 
@@ -72,7 +72,7 @@ One comment per staff and bar, signed "Doctor", graded, and as short as it can b
 | 3 | serious: music lost or added that the doctor could not fix | red | open | `Doctor 3: 1 note missing (file 4, Sibelius 3): lost on import` |
 
 - The comment takes the highest level of its findings; findings are listed highest first, separated by "; ".
-- Level 3: notes missing or extra in Sibelius compared with the fixed file, and problems the doctor could not fix that make Sibelius cut music (an overlong bar). Level 2: still differs from the user's original file (for example notes the doctor removed past a bar line), a tuplet lost, a bar of the wrong length, tremolos lost, a two-note tremolo inside a tuplet, a voice running past the bar line, and other problems the doctor left as they were. Level 1: changes the doctor made to notes or tremolos.
+- Level 3: notes missing or extra in Sibelius compared with the fixed file, and problems the doctor could not fix that make Sibelius cut music (an overlong bar). Level 2: bars the doctor lists as needing attention (kept longer than the time signature, notes removed past a bar line), still differs from the user's original file, a tuplet lost, a bar of the wrong length, tremolos lost, a two-note tremolo inside a tuplet, a voice running past the bar line, and other problems the doctor left as they were. Level 1: changes the doctor made to notes or tremolos.
 - "file" in a count means the fixed file Sibelius imported; "your file" means the user's original. When both counts say the same thing, only the first is kept. "all staves of the part" marks a count over a multi-staff part.
 - Inside a part, the first finding of a kind carries its explanation after a colon; later ones of the same kind only say `same: <short form>`.
 - The full wording, levels and every finding are in the details JSON (`comments`, `problems`); the comment carries none of the machine details.
@@ -106,7 +106,7 @@ MusicXML `<staff>` numbers map to the Sibelius staves of the part in order, and 
 
 - **Tuplet rounding, not reported.** Sibelius measures in whole ticks (256 per quarter), so a triplet eighth is 85.33 ticks and a tuplet group can come out a tick long or short. A difference of at most one tick per tuplet group in the bar (counted from the tuplets Sibelius reports) is ignored and only counted (`barLengthWithinTupletRounding`).
 - **Tuplet lost, reported as such.** Notes the file puts in a tuplet (`<time-modification>`) are counted per part and bar and compared with the note-rests Sibelius has inside a tuplet. When Sibelius has fewer, those notes are plain notes in Sibelius and the bar usually grows by the difference: a triplet eighth played as a plain eighth adds 128 - 85.33 = 42.67 ticks, so the bar reads 4.16 or 4.17 quarter notes instead of 4. Rounding cannot produce that, so the comment says the rhythm is off and gives the bar length.
-- **Anything else is a bar-length problem**, e.g. the Score A case: notes past the bar line that Sibelius drops or keeps by changing the bar. Those are always reported.
+- **Anything else is a bar-length problem**, e.g. the Score A case: notes past the bar line that Sibelius drops or keeps by changing the bar. Those are always reported, on the part that causes them: the part whose music in the file sets the bar's length when that differs from the time signature, else the part whose notes run past the bar line in Sibelius, else the first part with notes in that bar. The comment says what to do, e.g. `bar lasts 1.5 quarters in Sibelius (file 2): Sibelius cut the bar; compare the rhythm with the original`.
 
 For every bar with a bar-length or tuplet problem, the details JSON keeps what Sibelius holds there (`sibeliusEvidence`: the bar length and the raw plug-in rows: staff, bar, position, duration, voice, note count, tuplet left and right, two-note and single tremolo, grace), so a doubtful case can be settled from the data without reopening Sibelius.
 
@@ -120,7 +120,7 @@ For every bar with a bar-length or tuplet problem, the details JSON keeps what S
 | `not-allowed` | No was clicked (or the box was closed). Ask whether to try again |
 | `approval-timeout` | nobody answered; the box is still open. Ask the user to click No on it, then run again and click Yes |
 | `sibelius-busy` | a dialog is open in Sibelius, often a leftover connection box; ask the user to close it (No on a leftover connection box) |
-| `plugin-missing` / `plugin-outdated` | run `scripts/plugin/install.mjs`, then the user restarts Sibelius |
+| `plugin-missing` / `plugin-outdated` | run `scripts/plugin/install.mjs`, then the user restarts Sibelius (a newer installed plug-in is accepted) |
 | `import-failed` | the import box was cancelled, or Sibelius could not read the file |
 | `sibelius-closed` | Sibelius quit or crashed during the run; see below |
 | `sibelius-timeout` | Sibelius stopped answering; usually a dialog box is waiting in its window |
@@ -135,7 +135,7 @@ Set `SIBELIUS_IMPORT_DOCTOR_DEBUG=1` to log every Connect frame to stderr.
 - macOS: `~/Library/Application Support/Avid/Sibelius/Plugins/Import Doctor/SibeliusImportDoctor.plg`
 - Windows (untested): `%APPDATA%\Avid\Sibelius\Plugins\Import Doctor\SibeliusImportDoctor.plg`
 
-`--check` reports without writing, `--remove` uninstalls. It appears in Sibelius under the Plug-ins menu as "Sibelius Import Doctor" and does nothing when run by hand. It only reads the score, adds comments (author "Doctor", colour and open or minimised per level), saves a `.sib` copy and closes the scores this check opened: there is deliberately no method that edits notes, because the connection box grants the client whatever the plug-in can do. Its version (`Ping`) must match `PLUGIN_VERSION` in `install.mjs`; bump both together, and remember the user has to restart Sibelius after every plug-in change.
+`--check` reports without writing (including `installedVersion` and `newerInstalled`), `--remove` uninstalls. The installer only upgrades: if the installed plug-in has the same or a newer version than this copy (for example after the skill was run from an older cached copy), it keeps it, reports `changed: false` and says why in `note`; `--force` replaces it anyway. It appears in Sibelius under the Plug-ins menu as "Sibelius Import Doctor" and does nothing when run by hand. It only reads the score, adds comments (author "Doctor", colour and open or minimised per level), saves a `.sib` copy and closes the scores this check opened: there is deliberately no method that edits notes, because the connection box grants the client whatever the plug-in can do. Its version (`Ping`) must be at least `PLUGIN_VERSION` in `install.mjs`; bump both together for every plug-in change, and remember the user has to restart Sibelius after every plug-in change.
 
 ## Learned the hard way
 

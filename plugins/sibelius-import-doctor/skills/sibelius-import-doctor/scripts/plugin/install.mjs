@@ -1,9 +1,13 @@
 #!/usr/bin/env node
 // Installs the Sibelius Import Doctor ManuScript plug-in for the current user.
 //
-//   node install.mjs            install or update; prints JSON
-//   node install.mjs --check    only report whether it is installed and current
+//   node install.mjs            install, or upgrade an older installed version; prints JSON
+//   node install.mjs --check    only report what is installed
+//   node install.mjs --force    write this copy even over a newer or equal installed version
 //   node install.mjs --remove   uninstall
+//
+// It only upgrades: when the installed plug-in has a newer version than this copy (for example a copy
+// of the skill from an older cache), or the same version, it is left alone and the output says so.
 //
 // The source next to this file is UTF-8; Sibelius gets a UTF-16LE copy with a byte-order mark,
 // which is the encoding Sibelius' own plug-ins use.
@@ -53,17 +57,36 @@ export function sibeliusRunning() {
   }
 }
 
+// Version written in a plug-in file's Ping method, or null.
+export function versionOf(buf) {
+  const text = buf[0] === 0xff && buf[1] === 0xfe ? buf.subarray(2).toString("utf16le") : buf.toString("utf8");
+  const m = /'plugin',\s*'(\d+(?:\.\d+)*)'/.exec(text);
+  return m ? m[1] : null;
+}
+
+// -1, 0 or 1 comparing dotted version strings numerically.
+export function compareVersions(a, b) {
+  const pa = String(a).split(".").map(Number), pb = String(b).split(".").map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d) return Math.sign(d);
+  }
+  return 0;
+}
+
+// current: an installed plug-in at least as new as this copy (connect.mjs accepts newer ones).
 export function pluginStatus() {
   const p = pluginPath();
   if (!p) return { supported: false, path: null, installed: false, current: false };
-  let installed = false;
-  let current = false;
+  let installedVersion = null, identical = false, installed = false;
   try {
     const have = fs.readFileSync(p);
     installed = true;
-    current = have.equals(expectedBytes());
+    installedVersion = versionOf(have);
+    identical = have.equals(expectedBytes());
   } catch {}
-  return { supported: true, path: p, installed, current, version: PLUGIN_VERSION };
+  const cmp = installedVersion ? compareVersions(installedVersion, PLUGIN_VERSION) : -1;
+  return { supported: true, path: p, installed, installedVersion, version: PLUGIN_VERSION, identical, newerInstalled: installed && cmp > 0, current: installed && (identical || cmp >= 0) };
 }
 
 function main(argv) {
@@ -76,7 +99,13 @@ function main(argv) {
     try { fs.rmdirSync(path.dirname(st.path)); } catch {}
     return { ok: true, removed: st.path, restartSibelius: running };
   }
-  if (st.current) return { ok: true, ...st, changed: false, restartSibelius: false };
+  if (st.installed && !argv.includes("--force")) {
+    if (st.identical) return { ok: true, ...st, changed: false, restartSibelius: false };
+    const cmp = st.installedVersion ? compareVersions(st.installedVersion, PLUGIN_VERSION) : -1;
+    if (cmp >= 0) {
+      return { ok: true, ...st, changed: false, restartSibelius: false, note: `Kept the installed plug-in ${st.installedVersion}: it is ${cmp > 0 ? "newer than" : "the same version as"} this copy (${PLUGIN_VERSION}). Nothing was downgraded; use --force to replace it anyway.` };
+    }
+  }
   fs.mkdirSync(path.dirname(st.path), { recursive: true });
   fs.writeFileSync(st.path, expectedBytes());
   return {

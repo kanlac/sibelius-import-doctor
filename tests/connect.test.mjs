@@ -103,7 +103,7 @@ test("missing notes, lost tremolos, tuplet tremolos, overflow and bar length are
   rows.push([3, 2, 768, 512, 1, 0, 0, 0, 0, 0, 0]); // a rest running past the bar line
   const c = compare(a, INFO, rows, [256, 1024]);
   const kinds = c.problems.map((p) => `${p.staff}:${p.bar}:${p.kind}`).sort();
-  assert.deepEqual(kinds, ["1:2:bar-length", "1:2:tremolo-missing", "1:2:two-note-tremolo-in-tuplet", "3:2:notes-missing", "3:2:voice-overflow"].sort());
+  assert.deepEqual(kinds, ["3:2:bar-length", "1:2:tremolo-missing", "1:2:two-note-tremolo-in-tuplet", "3:2:notes-missing", "3:2:voice-overflow"].sort());
   assert.equal(c.lost, 1);
 });
 
@@ -244,6 +244,69 @@ test("the doctor's report.json: harmless rest changes get no comment, note and t
   assert.equal(comments[1].staff, 2);
   assert.equal(comments[1].level, 2);
   assert.match(comments[1].text, /^Doctor 2: unmeasured tremolo left as is: Sibelius may drop it$/);
+});
+
+test("bars the doctor kept longer than the time signature are commented at level 2 on the overlong part", () => {
+  const a = analyseScore(loadScore(tmpFile("s.musicxml", SCORE)));
+  const report = tmpFile("pad.report.json", JSON.stringify({
+    log: [{ part: "P2", measure: 2, number: "1", fix: "pad", staff: "1" }],
+    found: [{ kind: "overlong-bar", fixed: true, where: [{ part_id: "P1", part: "Flute", bars: ["1"] }] }],
+    needs_attention: [
+      { kind: "bars-longer-than-time-signature", message: "These bars were kept longer...", bars: ["1"] },
+      { kind: "composer-unknown", message: "The file has no composer." },
+    ],
+  }));
+  const ch = loadChanges(report);
+  assert.equal(ch.harmless, 1);
+  const comments = buildComments(doctorItems(ch, a));
+  assert.equal(comments.length, 1);
+  assert.equal(comments[0].staff, 1);
+  assert.equal(comments[0].part, "Flute & Piccolo");
+  assert.equal(comments[0].text, "Doctor 2: bar longer than the time signature: one note value is probably wrong; compare with the original");
+});
+
+test("notes the doctor removed are level 2 (compare with the original), replacing the level-1 change", () => {
+  const a = analyseScore(loadScore(tmpFile("s.musicxml", SCORE)));
+  const report = tmpFile("trim.report.json", JSON.stringify({
+    log: [{ part: "P1", measure: 2, number: "1", fix: "trim-delete", deleted_noteheads: 1 }],
+    found: [],
+    needs_attention: [{ kind: "notes-removed", message: "...", where: [{ part: "Flute & Piccolo", bars: ["1"], notes: 1 }] }],
+  }));
+  const comments = buildComments(doctorItems(loadChanges(report), a));
+  assert.deepEqual(comments.map((g) => g.text), ["Doctor 2: notes past the bar line removed: compare with the original"]);
+});
+
+test("a bar Sibelius cut short is reported on the part whose music sets its length, with what to do", () => {
+  const two = (staffNotes) => `<?xml version="1.0"?><score-partwise version="4.0"><part-list>
+<score-part id="P1"><part-name>Flute</part-name></score-part><score-part id="P2"><part-name>Oboe</part-name></score-part></part-list>
+<part id="P1"><measure number="1"><attributes><divisions>1</divisions><time><beats>2</beats><beat-type>4</beat-type></time></attributes>${staffNotes[0]}</measure></part>
+<part id="P2"><measure number="1"><attributes><divisions>1</divisions><time><beats>2</beats><beat-type>4</beat-type></time></attributes>${staffNotes[1]}</measure></part></score-partwise>`;
+  const q = '<note><pitch><step>C</step><octave>5</octave></pitch><duration>1</duration><voice>1</voice><type>quarter</type></note>';
+  const a = analyseScore(loadScore(tmpFile("cut.musicxml", two([q.repeat(2), q.repeat(3)]))));
+  const rows = [[1, 1, 0, 256, 1, 1, 0, 0, 0, 0, 0], [1, 1, 256, 256, 1, 1, 0, 0, 0, 0, 0], [2, 1, 0, 256, 1, 1, 0, 0, 0, 0, 0], [2, 1, 256, 256, 1, 1, 0, 0, 0, 0, 0]];
+  const c = compare(a, { ok: true, staffCount: 2 }, rows, [384]);
+  const len = c.problems.find((p) => p.kind === "bar-length");
+  assert.equal(len.staff, 2);
+  assert.equal(len.part, "Oboe");
+  assert.equal(len.text, "bar lasts 1.5 quarters in Sibelius (file 3): Sibelius cut the bar; compare the rhythm with the original");
+});
+
+test("the installer only upgrades, and says so when it keeps a newer plug-in", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sid-plugins-"));
+  const run = (...args) => JSON.parse(execFileSync(process.execPath, [path.join(SCRIPTS, "plugin", "install.mjs"), ...args], { env: { ...process.env, SIBELIUS_PLUGINS_DIR: dir }, encoding: "utf8" }));
+  const first = run();
+  assert.equal(first.changed, true);
+  const file = first.path;
+  const newer = fs.readFileSync(file).toString("utf16le").replace(/'plugin', '[^']*'/, "'plugin', '99.0.0'");
+  fs.writeFileSync(file, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(newer.slice(1), "utf16le")]));
+  const kept = run();
+  assert.equal(kept.changed, false);
+  assert.equal(kept.installedVersion, "99.0.0");
+  assert.equal(kept.current, true);
+  assert.match(kept.note, /newer than this copy/);
+  const older = newer.replace("'99.0.0'", "'0.0.1'");
+  fs.writeFileSync(file, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(older.slice(1), "utf16le")]));
+  assert.equal(run().changed, true);
 });
 
 test(".mxl archives are read through META-INF/container.xml", () => {
