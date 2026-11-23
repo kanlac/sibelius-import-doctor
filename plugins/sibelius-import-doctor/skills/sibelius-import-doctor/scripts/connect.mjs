@@ -185,7 +185,8 @@ function tremoloKinds(note) {
 function measureFacts(m, st) {
   // partTrem: tremolos of the whole part, one per voice and onset, so a chord spread over two staves
   // (cross-staff notation) counts once, as Sibelius shows it.
-  const f = { number: m.attrs.number ?? "", implicit: m.attrs.implicit === "yes", heads: {}, partTrem: { single: new Set(), double: new Set() }, fill: 0 };
+  // tuplets: onsets of notes the file puts in a tuplet (<time-modification>), one per voice and onset.
+  const f = { number: m.attrs.number ?? "", implicit: m.attrs.implicit === "yes", heads: {}, partTrem: { single: new Set(), double: new Set() }, tuplets: new Set(), fill: 0 };
   let pos = 0, lastStart = 0, lastVoice = "1";
   for (const el of m.children) {
     if (el.name === "attributes") {
@@ -210,6 +211,7 @@ function measureFacts(m, st) {
       if (!isChord) { lastStart = pos; pos += d; f.fill = Math.max(f.fill, pos); }
       if (isRest) continue;
       f.heads[staff] = (f.heads[staff] || 0) + 1;
+      if (!isGrace && kid(el, "time-modification")) f.tuplets.add(`${voice}@${start}`);
       for (const kind of tremoloKinds(el)) {
         const set = kind === "single" || kind === "unmeasured" ? f.partTrem.single : kind === "start" ? f.partTrem.double : null;
         if (set) set.add(`${voice}@${start}@${isGrace}`);
@@ -250,6 +252,7 @@ export function analyseScore(root) {
         heads: Object.values(f.heads).reduce((a, n) => a + n, 0),
         single: f.partTrem.single.size,
         double: f.partTrem.double.size,
+        tuplets: f.tuplets.size,
       })),
     });
   }
@@ -268,8 +271,12 @@ export function analyseReadback(rows, barLengths) {
   for (const r of rows) {
     const [s, b, pos, dur, voice, count, tl, tr, dtrem, strem, grace] = r;
     const key = `${s}:${b}`;
-    const c = cells.get(key) || { heads: 0, single: 0, double: 0, doubleInTuplet: 0 };
+    const c = cells.get(key) || { heads: 0, single: 0, double: 0, doubleInTuplet: 0, tuplets: 0, tupletGroups: 0 };
     c.heads += count;
+    if (tl && !grace) {
+      if (count > 0) c.tuplets += 1;
+      c.tupletGroups += 1 / tl; // a 3:2 group of three note-rests adds up to one group
+    }
     if (count > 0 && strem) c.single += 1;
     if (dtrem > 0) { c.double += 1; if (tl) c.doubleInTuplet += 1; }
     cells.set(key, c);
@@ -302,9 +309,9 @@ function plural(n, word) { return `${n} ${word}${n === 1 ? "" : "s"}`; }
 // harp or accordion parts), which is not a loss. Such moves are only counted (movedBetweenStaves).
 // A part-level difference is reported on the staff of the part where it shows most.
 function partCell(cells, part, b) {
-  const per = part.staves.map((s) => ({ s, c: cells.get(`${s}:${b}`) || { heads: 0, single: 0, double: 0, doubleInTuplet: 0 } }));
+  const per = part.staves.map((s) => ({ s, c: cells.get(`${s}:${b}`) || { heads: 0, single: 0, double: 0, doubleInTuplet: 0, tuplets: 0, tupletGroups: 0 } }));
   const sum = (k) => per.reduce((a, x) => a + x.c[k], 0);
-  return { per, heads: sum("heads"), single: sum("single"), double: sum("double") };
+  return { per, heads: sum("heads"), single: sum("single"), double: sum("double"), tuplets: sum("tuplets") };
 }
 
 function staffDiffs(xml, part, per, b) {
@@ -317,24 +324,40 @@ function pickStaff(diffs, sign) {
   return best.s;
 }
 
+// Bar length. Sibelius counts in whole ticks (256 per quarter), so a tuplet can come out up to a tick
+// longer or shorter than its exact value: a difference of at most one tick per tuplet group in the bar
+// is rounding, not a problem. A note the file puts in a tuplet but Sibelius shows as a plain note
+// (tuplet lost) lengthens the bar by far more, e.g. 128 - 85.33 ticks for a triplet eighth; that is
+// reported as such. Any other difference is reported as a bar-length problem (e.g. notes past the
+// bar line that Sibelius kept by making the bar longer).
+function tupletRounding(cells, nStaves, b) {
+  let groups = 0;
+  for (let s = 1; s <= nStaves; s++) groups += (cells.get(`${s}:${b}`) || { tupletGroups: 0 }).tupletGroups;
+  return Math.ceil(groups - 1e-9);
+}
+
+function barLengthText(sib, intended) {
+  return `this bar lasts ${quarters(sib)} quarter notes in Sibelius, but the music in the file lasts ${quarters(intended)}`;
+}
+
 // Compare one imported file with its MusicXML. Returns totals and a list of bars that look wrong.
 export function compare(xml, info, rows, barLengths) {
   const { cells, overflow } = analyseReadback(rows, barLengths);
   const structure = { xmlStaves: xml.staves.length, sibeliusStaves: info.staffCount, xmlBars: xml.bars.length, sibeliusBars: barLengths.length };
   const staffMatch = structure.xmlStaves === structure.sibeliusStaves;
   const problems = [];
-  let xmlNotes = 0, sibNotes = 0, lost = 0, gained = 0, moved = 0;
+  let xmlNotes = 0, sibNotes = 0, lost = 0, gained = 0, moved = 0, roundedBars = 0;
   for (const st of xml.staves) for (const b of st.bars) xmlNotes += b.heads;
   for (const c of cells.values()) sibNotes += c.heads;
   const nBars = Math.max(xml.bars.length, barLengths.length);
   for (let b = 1; b <= nBars; b++) {
     const bar = xml.bars[b - 1];
     const label = bar ? bar.number : String(b);
-    if (bar && barLengths[b - 1] !== undefined && barLengths[b - 1] !== bar.intended) {
-      problems.push({ staff: 1, bar: b, measure: label, kind: "bar-length", text: `this bar lasts ${quarters(barLengths[b - 1])} quarter notes in Sibelius, but the music in the file lasts ${quarters(bar.intended)}` });
-    }
-    if (!staffMatch || !bar) continue;
-    for (const part of xml.parts) {
+    const sibLen = barLengths[b - 1];
+    const lengthOff = bar && sibLen !== undefined && Math.abs(sibLen - bar.intended) > tupletRounding(cells, info.staffCount, b);
+    let lengthExplained = false;
+    if (bar && sibLen !== undefined && sibLen !== bar.intended && !lengthOff) roundedBars += 1;
+    if (staffMatch && bar) for (const part of xml.parts) {
       const want = part.bars[b - 1] || { heads: 0, single: 0, double: 0 };
       const got = partCell(cells, part, b);
       const diffs = staffDiffs(xml, part, got.per, b);
@@ -346,6 +369,13 @@ export function compare(xml, info, rows, barLengths) {
       if (got.heads > want.heads) { gained += got.heads - want.heads; problems.push({ ...at(1), kind: "notes-extra", text: `the file has ${plural(want.heads, "note")} ${here}, Sibelius shows ${got.heads}` }); }
       if (got.single < want.single) problems.push({ ...at(-1), kind: "tremolo-missing", text: `${plural(want.single - got.single, "tremolo")} from the file ${want.single - got.single === 1 ? "is" : "are"} missing` });
       if (got.double < want.double) problems.push({ ...at(-1), kind: "two-note-tremolo-missing", text: `${plural(want.double - got.double, "two-note tremolo")} from the file ${want.double - got.double === 1 ? "is" : "are"} missing` });
+      if (got.tuplets < (want.tuplets || 0)) {
+        const n = want.tuplets - got.tuplets;
+        let text = `${plural(n, "note")} that the file puts in a tuplet (such as a triplet) ${n === 1 ? "is a plain note" : "are plain notes"} in Sibelius, so the rhythm is off`;
+        if (lengthOff && !lengthExplained) { text += ` and ${barLengthText(sibLen, bar.intended).replace("this bar lasts", "the bar lasts")}`; lengthExplained = true; }
+        const tupStaff = got.per.reduce((best, x) => (x.c.tuplets < best.c.tuplets ? x : best), got.per[0]).s;
+        problems.push({ staff: tupStaff, bar: b, measure: label, part: part.name, kind: "tuplet-lost", text });
+      }
       for (const { s, c } of got.per) {
         const cell = { staff: s, bar: b, measure: label, part: part.name };
         if (c.doubleInTuplet > 0) problems.push({ ...cell, kind: "two-note-tremolo-in-tuplet", text: "a two-note tremolo here sits inside a tuplet, so it may be drawn as double whole notes" });
@@ -353,8 +383,13 @@ export function compare(xml, info, rows, barLengths) {
         if (voices) problems.push({ ...cell, kind: "voice-overflow", text: `notes in voice ${voices.join(" and ")} run past the end of the bar` });
       }
     }
+    if (lengthOff && !lengthExplained) problems.push({ staff: 1, bar: b, measure: label, kind: "bar-length", text: barLengthText(sibLen, bar.intended) });
   }
-  return { structure, staffMatch, xmlNotes, sibeliusNotes: sibNotes, lost, gained, movedBetweenStaves: moved, problems, cells: { staffCount: info.staffCount, map: cells } };
+  // What Sibelius holds in bars with a length or tuplet problem, kept in the details for diagnosis.
+  const flagged = new Set(problems.filter((p) => p.kind === "bar-length" || p.kind === "tuplet-lost").map((p) => p.bar));
+  const evidence = {};
+  for (const b of [...flagged].slice(0, 20)) evidence[b] = { barLength: barLengths[b - 1], rows: rows.filter((r) => r[1] === b) };
+  return { structure, staffMatch, xmlNotes, sibeliusNotes: sibNotes, lost, gained, movedBetweenStaves: moved, barLengthWithinTupletRounding: roundedBars, problems, evidence, cells: { staffCount: info.staffCount, map: cells } };
 }
 
 // Bars of the fixed import whose note count differs from the user's original file, per part and bar
@@ -762,7 +797,7 @@ async function readScore(sess) {
 const cellCount = (list) => new Set(list.map((p) => `${p.staff}:${p.bar}`)).size;
 
 function importSummary(c) {
-  return { xmlNotes: c.xmlNotes, sibeliusNotes: c.sibeliusNotes, lost: c.lost, gained: c.gained, movedBetweenStaves: c.movedBetweenStaves ?? 0, barsThatLookWrong: cellCount(c.problems), structure: c.structure };
+  return { xmlNotes: c.xmlNotes, sibeliusNotes: c.sibeliusNotes, lost: c.lost, gained: c.gained, movedBetweenStaves: c.movedBetweenStaves ?? 0, barLengthWithinTupletRounding: c.barLengthWithinTupletRounding ?? 0, barsThatLookWrong: cellCount(c.problems), structure: c.structure };
 }
 
 async function importAndRead(sess, file, mode, timings) {
@@ -812,7 +847,7 @@ async function check(opts) {
     if (opts.original) {
       const o = await importAndRead(sess, opts.original, mode, timings);
       const c = compare(xmlOrig, o.info, o.rows, o.barLengths);
-      report.original = { file: path.resolve(opts.original), ...importSummary(c), problems: c.problems };
+      report.original = { file: path.resolve(opts.original), ...importSummary(c), problems: c.problems, sibeliusEvidence: c.evidence };
       if (!(await sess.plugin("CloseScore", [o.info.staffCount, o.info.title ?? ""]))) say("Left the original open in Sibelius (the active window changed).");
     }
     const f = await importAndRead(sess, opts.fixed, mode, timings);
@@ -830,7 +865,7 @@ async function check(opts) {
     await sess.plugin("SaveSib", [sib]);
     if (opts.close) await sess.plugin("CloseScore", [f.info.staffCount, f.info.title ?? ""]);
     const needsEyes = comments.filter((g) => g.needsEyes);
-    report.fixed = { file: path.resolve(opts.fixed), ...importSummary(c), problems: c.problems };
+    report.fixed = { file: path.resolve(opts.fixed), ...importSummary(c), problems: c.problems, sibeliusEvidence: c.evidence };
     report.comparedWithOriginal = { compared: vsOrig.compared, reason: vsOrig.reason ?? null, bars: vsOrig.bars };
     report.doctorChanges = changes ? { commented: changes.changed.length + changes.unfixed.length, harmlessNotCommented: changes.harmless, unplaced } : null;
     report.comments = comments;

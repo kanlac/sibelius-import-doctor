@@ -169,6 +169,43 @@ test("chord members without <voice> belong to the chord's voice (one tremolo per
   assert.equal(a.parts[1].bars[1].single, 1);
 });
 
+function oneBar(notes) {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0"><part-list><score-part id="P1"><part-name>Flute</part-name></score-part></part-list>
+<part id="P1"><measure number="1"><attributes><divisions>12</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes>
+${notes}
+</measure></part></score-partwise>`;
+}
+const TRIPLET = '<note><pitch><step>C</step><octave>5</octave></pitch><duration>4</duration><voice>1</voice><type>eighth</type><time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification></note>';
+const tripletRows = () => Array.from({ length: 12 }, (_, i) => [1, 1, Math.floor((i * 256) / 3), 128, 1, 1, 3, 2, 0, 0, 0]);
+
+test("a bar of triplets a tick longer in Sibelius is rounding, not a problem", () => {
+  const a = analyseScore(loadScore(tmpFile("t.musicxml", oneBar(TRIPLET.repeat(12)))));
+  assert.equal(a.parts[0].bars[0].tuplets, 12);
+  const c = compare(a, { ok: true, staffCount: 1 }, tripletRows(), [1025]);
+  assert.deepEqual(c.problems, []);
+  assert.equal(c.barLengthWithinTupletRounding, 1);
+});
+
+test("a triplet note shown as a plain eighth is reported once, with the longer bar", () => {
+  const a = analyseScore(loadScore(tmpFile("t.musicxml", oneBar(TRIPLET.repeat(12)))));
+  const rows = tripletRows();
+  rows[11][6] = 0; rows[11][7] = 0; // the last note lost its tuplet: 128 ticks instead of 85.33
+  const c = compare(a, { ok: true, staffCount: 1 }, rows, [1067]);
+  assert.deepEqual(c.problems.map((p) => p.kind), ["tuplet-lost"]);
+  assert.match(c.problems[0].text, /^1 note that the file puts in a tuplet .* is a plain note in Sibelius, so the rhythm is off and the bar lasts 4\.17 quarter notes in Sibelius, but the music in the file lasts 4$/);
+  assert.ok(c.evidence[1].rows.length === 12);
+});
+
+test("an overlong bar is still reported (notes past the bar line, no tuplets)", () => {
+  const q = '<note><pitch><step>D</step><octave>5</octave></pitch><duration>12</duration><voice>1</voice><type>quarter</type></note>';
+  const a = analyseScore(loadScore(tmpFile("o.musicxml", oneBar(q.repeat(5)))));
+  const rows = [0, 256, 512, 768].map((pos) => [1, 1, pos, 256, 1, 1, 0, 0, 0, 0, 0]);
+  const c = compare(a, { ok: true, staffCount: 1 }, rows, [1024]);
+  assert.deepEqual(c.problems.map((p) => p.kind).sort(), ["bar-length", "notes-missing"]);
+  assert.equal(c.lost, 1);
+});
+
 test("the doctor's report.json: harmless rest changes get no comment, note and tremolo changes do", () => {
   const a = analyseScore(loadScore(tmpFile("s.musicxml", SCORE)));
   const report = tmpFile("r.report.json", JSON.stringify({
