@@ -17,15 +17,36 @@ node scripts/doctor.mjs <score.musicxml|.xml|.mxl> <output folder> [options]
 | `--fill-short-bars` | Also fill bars that end early with rests. Sibelius does not need this; the original Python prototype always did it |
 | `--dry-run` | Only report; write nothing |
 
-It prints one line of JSON: `found` (each problem kind with `fixed` true or false and, where it applies, the parts and bar numbers), `changes` (how many of each repair), `notes_removed` (always 0 in pad mode), `needs_attention` (things to tell the user about, see below), `warnings`, and the paths of `fixed` (`<name>.fixed.musicxml`), `report` (`<name>.report.md`, plain English, for the user) and `report_json` (`<name>.report.json`, every change with part and bar; `scripts/connect.mjs check --changes` reads it). Exit code 0 means it ran (whether or not it found anything); 2 means the file could not be read, with the reason in `error`.
+Give it the output folder (one folder per score, named after it); every path it prints and writes is absolute. It prints one line of JSON:
 
-`needs_attention` values:
+- `headline`: the result in one or two plain sentences, for example "Found 2 kinds of problem that Sibelius would get wrong when it opens this file, and fixed all of them in the copy. Small note: the file names no composer."
+- `found`: one entry per kind, with `category`, `grade`, `fixed` and, where it applies, `where` (part names and bar numbers) or `parts` (part `id` and `name`).
+- `worth_a_look`: plain sentences about bars the user should look at.
+- `needs_attention`: machine names of the same things plus what to ask the user (see below).
+- `changes` (how many of each repair), `notes_removed` (always 0 in pad mode), `warnings` (plain sentences).
+- Paths: `fixed` (`<name>.fixed.musicxml`), `report` (`<name>.report.md`, plain English for the user, with the full paths of the original, the fixed copy and itself) and `report_json` (`<name>.report.json`: everything above plus every change with part, bar and grade; `scripts/connect.mjs check --changes` reads it).
+
+Exit code 0 means it ran (whether or not it found anything); 2 means the file could not be read, with the reason in `error`.
+
+**Category.** `problem`: Sibelius would get the music wrong (every section below except the last two). `note`: a small detail, a missing composer or missing short names. Notes never make a file count as having problems: a file whose only finding is a missing composer reads "Nothing was found that Sibelius is known to get wrong… Small note: the file names no composer."
+
+**Grade**, the same scale for every finding (`found[].grade`, and `grades` by kind in the JSON report) and every change (`log[].grade`), shared with the in-Sibelius check:
+
+| Grade | Meaning | Findings | Changes |
+|---|---|---|---|
+| `harmless` | Changed, nothing to check | two-note tremolos and unmeasured tremolos rewritten; rest-only bars fixed in trim mode; short names or composer added | whole-bar rests resized, rests added, tremolos rewritten, short names, composer |
+| `glance` | Changed; the user should look at the bars listed | overlong bars (pad: kept longer than the time signature; trim: notes removed or shortened); rest-only bars in pad mode (the bar may now be longer) | notes removed or shortened at the bar line |
+| `unfixed` | Left as it was | anything not fixed: unusual two-note tremolos, a composer or short names nobody supplied, a fix switched off, everything in a dry run | |
+
+`needs_attention` values, and what to do with them:
 
 - `bars-longer-than-time-signature`: pad mode kept these bars long so no note is lost. The music in them probably has one wrong note value; the user should compare those bars with the original.
 - `notes-removed`, `notes-shortened`: trim mode cut music at the bar line; the report lists part, bars and how many notes.
-- `composer-unknown`: ask the user for the composer and run again with `--composer`.
+- `composer-unknown`: ask the user for the composer's name and run again with `--composer`.
 - `short-names-missing`: parts without a short name (listed with part id and name). Choose names and run again with `--short-name` / `--short-names`.
 - `unusual-tremolo`: two-note tremolos written in a way that was not tested; left unchanged.
+
+The report and every text field are written for the user: musical terms, part names and bar numbers, no command-line options or file-format names. Only the options above are for you.
 
 Bar numbers are the numbers printed in the file (`<measure number>`), part names are the names in the file.
 
@@ -102,6 +123,8 @@ A four-bar cello excerpt was also exported from Sibelius to PDF before and after
 
 ## Parts without a short name
 
+A small note (category `note`), not a problem: the music imports correctly either way.
+
 **What it is.** The part has a name but no `<part-abbreviation>`.
 
 **In Sibelius.** The staff's short name is empty, so there is no instrument name to show at the start of later systems. Score B: 28 parts without a short name; in Sibelius 28 of its 29 staves had an empty short name.
@@ -114,11 +137,13 @@ A four-bar cello excerpt was also exported from Sibelius to PDF before and after
 
 ## No composer
 
+A small note (category `note`), not a problem: the music imports correctly either way.
+
 **What it is.** The file has no composer (`<creator type="composer">` missing or empty).
 
 **In Sibelius.** The score has no composer. With the composer filled in, Score B showed it in Sibelius and its re-export kept it.
 
-**The fix.** Only with a name the user gives: `--composer "Name"`. Without it, the problem is reported as not fixed and `needs_attention` contains `composer-unknown`. An existing composer is never changed.
+**The fix.** Only with a name the user gives: `--composer "Name"`. Without it, it stays a small note (category `note`, grade `unfixed`) and `needs_attention` contains `composer-unknown`. An existing composer is never changed.
 
 **Say to the user.** "The file doesn't say who the composer is. Tell me the name and I'll add it."
 

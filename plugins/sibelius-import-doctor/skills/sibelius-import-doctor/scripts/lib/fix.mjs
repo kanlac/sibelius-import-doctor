@@ -155,7 +155,7 @@ export class Fixer {
         const tTicks = targets[idx - 1];
         const tq = tTicks.mul(divisions).div(TICKS_PER_QUARTER);
         if (!tq.isInt()) {
-          this.warnings.push(`${pid} m${idx}: bar length not expressible in divisions=${divisions}`);
+          this.warnings.push(`${names[pid] || pid}, bar ${attr(m, "number") ?? idx}: the bar length cannot be written exactly in this file's note units, so this bar was left as it was.`);
           return;
         }
         const T = tq.n;
@@ -326,7 +326,7 @@ export class Fixer {
       const [parts, rem] = splitRepresentable(new Frac(gap, divisions));
       const durs = parts.map(([, , q]) => q.mul(divisions));
       if (durs.some((x) => !x.isInt())) {
-        this.warnings.push(`${ctx.part} m${ctx.measure}: cannot fill ${gap} divisions with plain rests at divisions=${divisions}`);
+        this.warnings.push(`${ctx.name || ctx.part}, bar ${ctx.number ?? ctx.measure}: the gap at the end cannot be filled with ordinary rests, so it was left open.`);
         continue;
       }
       if (endPos !== vend) {
@@ -334,7 +334,7 @@ export class Fixer {
         sub(mv, "duration", {}, Math.abs(endPos - vend));
         append(m, mv);
       }
-      if (rem.n !== 0) this.warnings.push(`${ctx.part} m${ctx.measure}: padding remainder ${rem} quarter not representable`);
+      if (rem.n !== 0) this.warnings.push(`${ctx.name || ctx.part}, bar ${ctx.number ?? ctx.measure}: a very short gap at the end could not be filled with a rest.`);
       parts.forEach(([t, dots], j) => append(m, makeRest(durs[j].n, v, multi ? staff : null, t, dots)));
       endPos = T;
       this.log.push({ ...ctx, fix: "pad", staff, voice: v, added_ticks: tk(gap, divisions) });
@@ -384,7 +384,7 @@ export class Fixer {
       let ab = find(sp, "part-abbreviation");
       const name = (findText(sp, "part-name") ?? "").trim();
       if (ab && (text(ab) ?? "").trim()) {
-        this.warnings.push(`${pid} (${name}) already has the short name "${text(ab).trim()}"; the given "${val}" was not applied`);
+        this.warnings.push(`${name || pid} already has the short name "${text(ab).trim()}", so "${val}" was not used.`);
         continue;
       }
       if (!ab) {

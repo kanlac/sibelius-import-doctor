@@ -127,7 +127,7 @@ test("parts without a short name are reported, and nothing is made up", () => {
   assert.equal(out.changes.abbreviation, undefined);
   const root = fixedRoot(out);
   assert.deepEqual([...iter(root, "score-part")].map((sp) => find(sp, "part-abbreviation")), [null, null]);
-  assert.match(read(out.report), /no short names were given/);
+  assert.match(read(out.report), /None were added\./);
 });
 
 test("--short-name applies the given names right after the part name", () => {
@@ -159,7 +159,7 @@ test("an existing short name is never replaced", () => {
   const root = fixedRoot(out);
   assert.deepEqual([...iter(root, "score-part")].map((sp) => findText(sp, "part-abbreviation")), ["Fl.", "Vln. 1"]);
   assert.equal(out.warnings.length, 1);
-  assert.match(out.warnings[0], /P2.*already has the short name "Vln. 1"/);
+  assert.match(out.warnings[0], /^Violin 1 already has the short name "Vln. 1", so "V1" was not used\.$/);
 });
 
 test("bad short-name arguments stop with exit code 2", () => {
@@ -176,7 +176,7 @@ test("bad short-name arguments stop with exit code 2", () => {
 
 test("composer: reported when missing, filled only when given", () => {
   const a = doctor([fixture("overlong"), tmp()]).out;
-  assert.deepEqual(a.found.find((p) => p.kind === "missing-composer"), { kind: "missing-composer", fixed: false });
+  assert.deepEqual(a.found.find((p) => p.kind === "missing-composer"), { kind: "missing-composer", category: "note", grade: "unfixed", fixed: false });
   assert.ok(a.needs_attention.includes("composer-unknown"));
   const b = doctor([fixture("tremolos"), tmp(), "--composer", "Clara Example"]).out;
   assert.equal(b.found.find((p) => p.kind === "missing-composer").fixed, true);
@@ -251,4 +251,48 @@ test("bad input: one line of JSON with ok false and exit code 2", () => {
   assert.equal(doctor([entity, dir]).code, 2);
   assert.equal(doctor([fixture("overlong"), dir, "--mode", "stretch"]).code, 2);
   assert.equal(doctor([fixture("overlong")]).code, 2);
+});
+
+test("report.md and the summary are plain words with full paths", () => {
+  const dir = tmp();
+  for (const args of [[], ["--mode", "trim"], ["--dry-run"], ["--short-name", "P1=Fl.", "--composer", "A. Composer"]]) {
+    const { out } = doctor([fixture("overlong"), join(dir, String(args.length) + args[0]), ...args]);
+    const texts = [out.headline, ...out.worth_a_look, ...out.warnings];
+    if (out.report) {
+      const md = read(out.report);
+      texts.push(md);
+      assert.ok(md.includes(`- Your file (not changed): ${out.input}`));
+      assert.ok(md.includes(`- Fixed copy: ${out.fixed}`));
+      assert.ok(md.includes(`- This report: ${out.report}`));
+    }
+    for (const raw of texts) {
+      const t = raw.split("\n").filter((l) => !/^(# Sibelius import check|- Your file|- Fixed copy|- This report)/.test(l)).join("\n");
+      assert.doesNotMatch(t, /--[a-z]|time.modification|tremolo.pair|part-abbreviation|measure-rest|overlong|_/i, t);
+    }
+  }
+});
+
+test("a missing composer is a small note: a clean file still reads as clean", () => {
+  const dir = tmp();
+  const p = join(dir, "clean.musicxml");
+  writeFileSync(p, read(fixture("pickup")).replace(/<identification>[\s\S]*?<\/identification>/, ""));
+  const { out } = doctor([p, dir]);
+  assert.deepEqual(out.found.map((f) => [f.kind, f.category, f.grade]), [["missing-composer", "note", "unfixed"]]);
+  assert.match(out.headline, /^Nothing was found that Sibelius is known to get wrong when it opens this file\. Small note: the file names no composer\.$/);
+  const md = read(out.report);
+  assert.doesNotMatch(md, /problem/i);
+  assert.match(md, /## Small notes/);
+});
+
+test("every finding and every change is graded harmless, glance or unfixed", () => {
+  const pad = JSON.parse(read(doctor([fixture("overlong"), tmp()]).out.report_json));
+  assert.deepEqual(pad.grades, { "overlong-bar": "glance", "overlong-rest": "glance", "missing-abbreviation": "unfixed", "missing-composer": "unfixed" });
+  const trim = JSON.parse(read(doctor([fixture("overlong"), tmp(), "--mode", "trim", "--composer", "A. Composer"]).out.report_json));
+  assert.deepEqual(trim.grades, { "overlong-bar": "glance", "overlong-rest": "harmless", "missing-abbreviation": "unfixed", "missing-composer": "harmless" });
+  const byFix = {};
+  for (const c of trim.log) byFix[c.fix] = c.grade;
+  assert.deepEqual(byFix, { "measure-rest": "harmless", "trim-shorten": "glance", "trim-delete": "glance", pad: "harmless", composer: "harmless" });
+  const trem = JSON.parse(read(doctor([fixture("tremolos"), tmp(), "--short-name", "P1=Vc.", "--short-name", "P2=Timp."]).out.report_json));
+  assert.deepEqual(trem.grades, { "two-note-tremolo": "harmless", "unmeasured-tremolo": "harmless", "missing-abbreviation": "harmless", "missing-composer": "unfixed" });
+  for (const f of [...pad.found, ...trim.found, ...trem.found]) assert.ok(["problem", "note"].includes(f.category));
 });

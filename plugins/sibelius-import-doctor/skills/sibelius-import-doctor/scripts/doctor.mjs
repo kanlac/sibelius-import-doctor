@@ -15,7 +15,7 @@ import { InputError, partNames, readScore } from "./lib/score.mjs";
 import { parse, serialize } from "./lib/xml.mjs";
 import { Fixer } from "./lib/fix.mjs";
 import { counts, problems } from "./lib/detect.mjs";
-import { attention, changeCounts, markdown, outcome } from "./lib/report.mjs";
+import { attention, changeCounts, gradeLog, headline, markdown, outcome } from "./lib/report.mjs";
 
 const HELP = `usage: node doctor.mjs <score> <output-folder> [options]
 
@@ -137,7 +137,10 @@ export function run(argv) {
     mode: options.mode,
     options,
     fixed: dryRun ? null : fixedPath,
-    fixed_name: basename(fixedPath),
+    report_md: dryRun ? null : mdPath,
+    report_json: dryRun ? null : jsonPath,
+    headline: headline(res, dryRun),
+    grades: Object.fromEntries(res.map((p) => [p.kind, p.grade])),
     found: res,
     needs_attention: needs,
     changes,
@@ -145,7 +148,7 @@ export function run(argv) {
     warnings,
     before,
     after,
-    log,
+    log: gradeLog(log),
   };
   if (!dryRun) {
     writeFileSync(jsonPath, JSON.stringify(rep, null, 1) + "\n", "utf8");
@@ -159,10 +162,12 @@ export function run(argv) {
     fixed: dryRun ? null : fixedPath,
     report: dryRun ? null : mdPath,
     report_json: dryRun ? null : jsonPath,
-    found: res.map((p) => ({ kind: p.kind, fixed: p.fixed, ...(p.where ? { where: p.where.map((w) => ({ part: w.part, bars: w.bars })) } : {}), ...(p.parts ? { parts: p.remaining ?? p.parts } : {}) })),
+    headline: rep.headline,
+    found: res.map((p) => ({ kind: p.kind, category: p.category, grade: p.grade, fixed: p.fixed, ...(p.where ? { where: p.where.map((w) => ({ part: w.part, bars: w.bars })) } : {}), ...(p.parts ? { parts: p.remaining ?? p.parts } : {}) })),
     changes,
     notes_removed: notesRemoved,
     needs_attention: needs.map((a) => a.kind),
+    worth_a_look: needs.filter((a) => a.grade === "glance").map((a) => a.message),
     warnings,
   };
   return { summary };
