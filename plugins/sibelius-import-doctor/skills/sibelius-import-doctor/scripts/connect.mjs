@@ -32,7 +32,7 @@ const TESTED = { year: 26, month: 11, label: "26.11" };
 const CLIENT_NAME = "Sibelius Import Doctor";
 const TICKS = 256; // Sibelius ticks per quarter note
 const MAX_COMMENTS = 300;
-const IMPORT_BOX_TITLE = "Open MusicXML File";
+const IMPORT_BOX_NEEDLE = "MusicXML"; // the box is titled "Open MusicXML File"
 
 const emit = (o) => process.stdout.write(JSON.stringify(o) + "\n");
 const say = (s) => process.stderr.write(s + "\n");
@@ -347,11 +347,13 @@ export function compareToOriginal(orig, cells, nSibBars) {
 //    {"changed": [{"part": "P1", "measure": "12", "text": "notes past the bar line were removed"}],
 //     "unfixed": [{"part": "P2", "measure": "30", "staff": 2, "text": "this bar is still too long"}]}
 //    part: MusicXML part id (or part name); measure: the number printed in the file, or measureIndex
-//    (1-based position) instead; staff: staff inside the part, default 1.
+//    (1-based position) instead; staff: staff inside the part, default 1; "harmless": true for a change
+//    that leaves every note and tremolo as it was (it gets no comment).
+// Only changes to notes or tremolos get a comment. Rest-only normalisations (whole-bar rest set to the
+// bar length, rests added to fill a bar) are harmless: counted, never commented.
+const HARMLESS_FIXES = new Set(["measure-rest", "pad", "pad-empty-measure"]);
+const HARMLESS_UNFIXED = new Set(["overlong-rest"]);
 const FIX_TEXT = {
-  "measure-rest": "the whole-bar rest was set to the length of the bar",
-  pad: "rests were added so every part fills the bar",
-  "pad-empty-measure": "an empty bar was filled with a whole-bar rest",
   "trim-delete": "notes past the bar line were removed",
   "trim-shorten": "a note crossing the bar line was shortened to end at it",
   "tremolo-pair": "two-note tremolo rewritten so Sibelius draws it correctly",
@@ -367,7 +369,9 @@ const UNFIXED_TEXT = {
 
 function fromDoctorReport(raw) {
   const changed = [];
+  let harmless = 0;
   for (const c of raw.log) {
+    if (HARMLESS_FIXES.has(c.fix)) { harmless += 1; continue; }
     if (!FIX_TEXT[c.fix] || !c.measure) continue;
     const n = c.deleted_noteheads;
     const text = c.fix === "trim-delete" && n ? `${plural(n, "note")} past the bar line ${n === 1 ? "was" : "were"} removed` : FIX_TEXT[c.fix];
@@ -375,11 +379,11 @@ function fromDoctorReport(raw) {
   }
   const unfixed = [];
   for (const p of raw.found || []) {
-    if (p.fixed || !p.where) continue;
+    if (p.fixed || !p.where || HARMLESS_UNFIXED.has(p.kind)) continue;
     const text = UNFIXED_TEXT[p.kind] || `${String(p.kind).replace(/-/g, " ")} (not fixed)`;
     for (const w of p.where) for (const bar of w.bars || []) unfixed.push({ part: w.part_id ?? w.part, measure: bar, staff: 1, text });
   }
-  return { changed, unfixed };
+  return { changed, unfixed, harmless };
 }
 
 const LIST_KEYS = { changed: ["changed", "changes", "fixed", "fixes"], unfixed: ["unfixed", "notFixed", "not_fixed", "remaining"] };
@@ -388,6 +392,7 @@ export function loadChanges(file) {
   const raw = JSON.parse(fs.readFileSync(file, "utf8"));
   if (Array.isArray(raw.log)) return fromDoctorReport(raw);
   const pick = (keys) => { for (const k of keys) if (Array.isArray(raw[k])) return raw[k]; return []; };
+  const all = [...pick(LIST_KEYS.changed), ...pick(LIST_KEYS.unfixed)];
   const norm = (e) => ({
     part: e.part ?? e.partId ?? e.part_id ?? null,
     measure: e.measure ?? e.bar ?? e.measureNumber ?? null,
@@ -395,7 +400,8 @@ export function loadChanges(file) {
     staff: Number(e.staff ?? 1) || 1,
     text: String(e.text ?? e.summary ?? e.description ?? e.what ?? "").trim(),
   });
-  return { changed: pick(LIST_KEYS.changed).map(norm), unfixed: pick(LIST_KEYS.unfixed).map(norm) };
+  const keep = (list) => list.filter((e) => !e.harmless).map(norm);
+  return { changed: keep(pick(LIST_KEYS.changed)), unfixed: keep(pick(LIST_KEYS.unfixed)), harmless: all.filter((e) => e.harmless).length };
 }
 
 export function locate(xml, e) {
@@ -405,30 +411,33 @@ export function locate(xml, e) {
   return { staff: staffIdx + 1, bar, measure: xml.bars[bar - 1].number, part: xml.staves[staffIdx].name };
 }
 
-const SECTION = {
-  changed: "Fixed",
-  unfixed: "Not fixed",
-  "differs-from-original": "Still differs from your file",
-  import: "Sibelius did not import this as the fixed file says",
-};
+// Sources in the order they are told, with the lead-in each gets in the comment.
+const SECTION = [
+  ["changed", "Changed"],
+  ["unfixed", "Could not be fixed"],
+  ["differs-from-original", "Still differs from your file"],
+  ["import", "Sibelius shows this differently from the fixed file"],
+];
+export const NEEDS_EYES = new Set(["unfixed", "differs-from-original", "import"]);
 
-// One comment per staff and bar, each saying what happened there.
+// One comment per staff and bar, all reasons merged into one plain-words text.
 export function buildComments(items) {
   const byCell = new Map();
   for (const it of items) {
     const key = `${it.staff}:${it.bar}`;
-    const g = byCell.get(key) || { staff: it.staff, bar: it.bar, measure: it.measure, part: it.part, sections: new Map() };
-    const sec = SECTION[it.source];
-    g.sections.set(sec, [...(g.sections.get(sec) || []), it.text]);
+    const g = byCell.get(key) || { staff: it.staff, bar: it.bar, measure: it.measure, part: it.part, texts: new Map() };
+    const list = g.texts.get(it.source) || [];
+    if (!list.includes(it.text)) list.push(it.text);
+    g.texts.set(it.source, list);
     byCell.set(key, g);
   }
   return [...byCell.values()]
     .sort((a, b) => a.bar - b.bar || a.staff - b.staff)
-    .map((g) => ({
-      staff: g.staff, bar: g.bar, measure: g.measure, part: g.part,
-      sources: [...g.sections.keys()],
-      text: `Import Doctor. ${[...g.sections].map(([sec, texts]) => `${sec}: ${[...new Set(texts)].join("; ")}.`).join(" ")}`,
-    }));
+    .map((g) => {
+      const sources = SECTION.map(([src]) => src).filter((src) => g.texts.has(src));
+      const body = SECTION.filter(([src]) => g.texts.has(src)).map(([src, lead]) => `${lead}: ${g.texts.get(src).join("; ")}.`).join(" ");
+      return { staff: g.staff, bar: g.bar, measure: g.measure, part: g.part, sources, needsEyes: sources.some((src) => NEEDS_EYES.has(src)), text: `Import Doctor: ${body}` };
+    });
 }
 
 // ---------------------------------------------------------------- Sibelius on this computer
@@ -539,21 +548,24 @@ class Session {
       ws.onerror = () => {};
       ws.onclose = (e) => {
         debug(`close code=${e.code} reason=${e.reason || "-"} afterOpenMs=${opened ? Date.now() - opened : "never opened"}`);
-        // A refusal carries a kClientRejected_* reason; an immediate bare close means Sibelius is not ready yet.
-        if (!settled) finish(!opened ? "refused" : /reject/i.test(e.reason || "") || Date.now() - opened > 5000 ? "denied" : "starting");
+        // Only a close whose reason says rejected (kClientRejected_*) is a refusal; any other close
+        // before an answer means Sibelius is not ready yet, and the caller retries.
+        if (!settled) finish(!opened ? "refused" : /reject/i.test(e.reason || "") ? "denied" : "starting");
         else this.onClose(e);
       };
       this.ws = ws;
     });
   }
 
+  // startupMs bounds the retries for "not ready yet" (refused, closed, busy): 3 minutes, or 5 when this
+  // run has just launched Sibelius.
   async connect({ approvalMs = Number(process.env.SIBELIUS_IMPORT_DOCTOR_APPROVAL_SECONDS || 300) * 1000, startupMs = 180000 } = {}) {
     const t0 = Date.now();
     let busyNoted = false;
     for (;;) {
       const r = await this.attempt(approvalMs);
       if (r === "ok") return;
-      if (r === "denied") throw new Fail("not-allowed", "Sibelius did not allow the connection (No was clicked, or the box was closed).", "Ask the user whether to try again; then they click Yes.");
+      if (r === "denied") throw new Fail("not-allowed", "Sibelius did not allow the connection (No was clicked).", "Ask the user whether to try again; then they click Yes.");
       if (r === "timeout") throw new Fail("approval-timeout", "Nobody answered Sibelius' connection box in time.", "The box stays open in Sibelius. Ask the user to click No on it, then run the check again and click Yes on the new box.");
       if (Date.now() - t0 > startupMs) {
         if (r === "busy") throw new Fail("sibelius-busy", "Sibelius is busy: a dialog box is open, often a connection box left over from an earlier attempt.", "Ask the user to close any open dialog in Sibelius (for a leftover connection box, click No), then run again.");
@@ -604,38 +616,84 @@ class Session {
 
 // ---------------------------------------------------------------- the import options box
 
+// Finds the import options box in any Sibelius window whose title contains the needle, and presses
+// its OK button wherever it sits (directly in the window, in a group, or deeper). Reports what it saw.
 const CLICK_OK_SCRIPT = `on run argv
-  set boxTitle to item 1 of argv
+  set needle to item 1 of argv
   tell application "System Events"
     if not (exists process "Sibelius") then return "no-process"
     tell process "Sibelius"
-      if not (exists window boxTitle) then return "no-window"
-      set w to window boxTitle
-      try
-        click button "OK" of w
-        return "clicked"
-      end try
-      repeat with e in (entire contents of w)
+      set wins to windows
+      if (count of wins) is 0 then return "no-windows"
+      repeat with w in wins
+        set t to ""
         try
-          if role of e is "AXButton" and (name of e as text) is "OK" then
-            click e
-            return "clicked"
-          end if
+          set t to (name of w as text)
         end try
+        if t contains needle then
+          try
+            click button "OK" of w
+            return "clicked"
+          end try
+          repeat with g in (groups of w)
+            try
+              click button "OK" of g
+              return "clicked"
+            end try
+          end repeat
+          repeat with e in (entire contents of w)
+            try
+              if role of e is "AXButton" and (name of e as text) is "OK" then
+                click e
+                return "clicked"
+              end if
+            end try
+          end repeat
+          return "no-button"
+        end if
       end repeat
-      return "no-button"
+      return "no-window"
     end tell
   end tell
 end run`;
 
-function clickImportOk() {
+// Shift (key code 56) wakes a screen saver, which otherwise hides Sibelius' windows from Accessibility.
+const WAKE_SCRIPT = 'tell application "System Events" to key code 56';
+
+function osa(args) {
   return new Promise((resolve) => {
-    execFile("osascript", ["-e", CLICK_OK_SCRIPT, IMPORT_BOX_TITLE], { timeout: 20000 }, (err, stdout, stderr) => {
+    execFile("osascript", args, { timeout: 20000 }, (err, stdout, stderr) => {
       if (!err) return resolve(stdout.trim());
       const text = `${stderr} ${err.message}`;
       resolve(/-1719|-25211|-1743|assistive|not allowed|not authori[sz]ed/i.test(text) ? "no-permission" : "error");
     });
   });
+}
+
+const clickImportOk = () => osa(["-e", CLICK_OK_SCRIPT, IMPORT_BOX_NEEDLE]);
+const wakeScreen = () => osa(["-e", WAKE_SCRIPT]);
+
+// agent-clicks: keep looking for the box until the import returns. After 30 s without success the user
+// is asked too, and whoever is first wins.
+async function pressImportOk(open, isDone, asked) {
+  const t0 = Date.now();
+  let misses = 0, askedUser = false;
+  while (!isDone()) {
+    await Promise.race([open.catch(() => {}), sleep(1000)]);
+    if (isDone()) return;
+    const r = await clickImportOk();
+    debug(`import box: ${r}`);
+    if (r === "clicked") { say("Clicked OK on the import options box."); return; }
+    if (r === "no-permission") {
+      emit({ event: "accessibility-needed", say: "macOS did not let the assistant click in Sibelius. To allow it: System Settings > Privacy & Security > Accessibility, turn on the app your assistant runs in (and allow it to control System Events under Automation if asked). For now, please click OK yourself." });
+      asked();
+      return;
+    }
+    misses += 1;
+    if (r === "no-windows" || misses % 3 === 0) await wakeScreen();
+    if (!askedUser && Date.now() - t0 > 30000) { askedUser = true; asked(); }
+    await sleep(1000);
+  }
 }
 
 async function importFile(sess, file, mode) {
@@ -645,21 +703,8 @@ async function importFile(sess, file, mode) {
   const open = sess.plugin("OpenFile", [path.resolve(file)], 900000);
   let done = false;
   open.then(() => (done = true), () => (done = true));
-  if (mode === "agent-clicks" && process.platform === "darwin") {
-    const t0 = Date.now();
-    for (;;) {
-      await Promise.race([open.catch(() => {}), sleep(1000)]);
-      if (done) break;
-      const r = await clickImportOk();
-      if (r === "clicked") { say("Clicked OK on the import options box."); break; }
-      if (r === "no-permission") {
-        emit({ event: "accessibility-needed", say: "macOS did not let the assistant click in Sibelius. To allow it: System Settings > Privacy & Security > Accessibility, turn on the app your assistant runs in (and allow it to control System Events under Automation if asked). For now, please click OK yourself." });
-        asked();
-        break;
-      }
-      if (Date.now() - t0 > 30000) { asked(); break; }
-    }
-  } else {
+  if (mode === "agent-clicks" && process.platform === "darwin") await pressImportOk(open, () => done, asked);
+  else {
     if (mode === "agent-clicks") say("Clicking for you works only on macOS; asking the user instead.");
     asked();
   }
@@ -718,9 +763,10 @@ async function check(opts) {
   const xmlOrig = opts.original ? analyseScore(loadScore(opts.original)) : null;
   const changes = opts.changes ? loadChanges(opts.changes) : null;
   fs.mkdirSync(outDir, { recursive: true });
-  if (!sibeliusRunning()) { say("Starting Sibelius..."); emit({ event: "starting-sibelius" }); launchSibelius(install.path); }
+  const launched = !sibeliusRunning();
+  if (launched) { say("Starting Sibelius..."); emit({ event: "starting-sibelius" }); launchSibelius(install.path); }
   const sess = new Session(opts.port);
-  await sess.connect();
+  await sess.connect({ startupMs: launched ? 300000 : 180000 });
   emit({ event: "connected" });
   try {
     const ping = await sess.plugin("Ping");
@@ -747,10 +793,10 @@ async function check(opts) {
     const sib = path.join(outDir, `${stem}.checked.sib`);
     await sess.plugin("SaveSib", [sib]);
     if (opts.close) await sess.plugin("CloseScore", [f.info.staffCount, f.info.title ?? ""]);
-    const needsEyes = comments.filter((g) => g.sources.some((s) => s !== "changed"));
+    const needsEyes = comments.filter((g) => g.needsEyes);
     report.fixed = { file: path.resolve(opts.fixed), ...importSummary(c), problems: c.problems };
     report.comparedWithOriginal = { compared: vsOrig.compared, reason: vsOrig.reason ?? null, bars: vsOrig.bars };
-    report.doctorChanges = changes ? { given: changes.changed.length + changes.unfixed.length, unplaced } : null;
+    report.doctorChanges = changes ? { commented: changes.changed.length + changes.unfixed.length, harmlessNotCommented: changes.harmless, unplaced } : null;
     report.comments = comments;
     const details = path.join(outDir, `${stem}.sibelius-check.json`);
     fs.writeFileSync(details, JSON.stringify(report, null, 1) + "\n");
@@ -765,8 +811,9 @@ async function check(opts) {
       comments: {
         added: Math.min(comments.length, MAX_COMMENTS),
         bars: comments.length,
-        changedOnly: comments.length - needsEyes.length,
+        changedNothingToDo: comments.length - needsEyes.length,
         needYourEyes: needsEyes.length,
+        harmlessChangesNotCommented: changes ? changes.harmless : 0,
         doctorEntriesNotPlaced: unplaced.length,
       },
       firstNeedingEyes: needsEyes.slice(0, 20).map((g) => ({ part: g.part ?? null, measure: g.measure, text: g.text })),

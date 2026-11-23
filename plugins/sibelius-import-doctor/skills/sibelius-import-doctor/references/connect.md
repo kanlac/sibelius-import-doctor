@@ -1,6 +1,6 @@
 # Checking the result inside Sibelius (Sibelius Connect)
 
-This is step 3 of SKILL.md. `scripts/connect.mjs` opens the user's original and fixed MusicXML in Sibelius, reads every note back through a small ManuScript plug-in, compares each bar with the files, and saves a `.sib` with a comment on every bar that was changed, could not be fixed, or still differs. Comments are the point of the step: they let the user jump straight to the bars that need their eyes. Comments do not survive MusicXML export, so the `.sib` is what the user keeps.
+This is step 3 of SKILL.md. `scripts/connect.mjs` opens the user's original and fixed MusicXML in Sibelius, reads every note back through a small ManuScript plug-in, compares each bar with the files, and saves a `.sib` with a comment on every bar where music changed or could not be fixed, and on bars where Sibelius still differs from the file. Comments are the point of the step: they let the user jump straight to the bars that need their eyes. Comments do not survive MusicXML export, so the `.sib` is what the user keeps.
 
 ## What it needs
 
@@ -38,7 +38,7 @@ This is step 3 of SKILL.md. `scripts/connect.mjs` opens the user's original and 
    | `error` | `code`, `message`, `hint`; exit code 1 |
 
    Each waiting event carries a `say` sentence you can pass on.
-8. The `done` line has the `.sib` path, the JSON details path (`<fixed name>.sibelius-check.json`), note totals for the original and the fixed import (`xmlNotes`, `sibeliusNotes`, `lost`, `gained`), `differsFromOriginalBars`, and `comments`: how many bars got a comment, how many only say what was fixed (`changedOnly`) and how many need the user's eyes (`needYourEyes`), plus the first of those with part name and bar number. Lead with that in plain words.
+8. The `done` line has the `.sib` path, the JSON details path (`<fixed name>.sibelius-check.json`), note totals for the original and the fixed import (`xmlNotes`, `sibeliusNotes`, `lost`, `gained`), `differsFromOriginalBars`, and `comments`: how many bars got a comment, how many were only changed and need nothing from the user (`changedNothingToDo`), how many need the user's eyes (`needYourEyes`: could not be fixed, still differs from their file, or Sibelius shows something different), how many harmless rest-only changes were left uncommented, plus the first bars needing eyes with part name and bar number. Lead with that in plain words.
 
 ## The connection box (approval)
 
@@ -46,14 +46,14 @@ Each new Connect connection makes Sibelius ask:
 
 > Application "Sibelius Import Doctor" is trying to connect to Sibelius for remote control. Do you want to allow it to invoke commands and ManuScript plug-ins?  [No] [Yes]
 
-This is the user's decision. Ask them to click Yes; never click it for them, in either mode, and never script it. The check waits up to 5 minutes (`SIBELIUS_IMPORT_DOCTOR_APPROVAL_SECONDS` changes that). If the check gives up, **the box stays open in Sibelius** (seen on 26.11): closing the WebSocket does not withdraw it. A connection attempt made while such a box was open got `busyError` in our tests, so before running again ask the user to click No on the old box; the next run then shows a fresh one. Behind a screen saver the box is invisible, and macOS Accessibility does not list it either. One run is one connection; a second run asks again. The documented `sessionToken` reconnection did not help in practice: on 26.11 a reconnect with a token from a live session got no answer at all, and after a Sibelius restart the token is rejected (`kClientRejected_ConnectTokenRejected`). So the script never stores tokens.
+This is the user's decision. Ask them to click Yes; never click it for them, in either mode, and never script it. The check waits up to 5 minutes (`SIBELIUS_IMPORT_DOCTOR_APPROVAL_SECONDS` changes that). If the check gives up, **the box stays open in Sibelius** (seen on 26.11): closing the WebSocket does not withdraw it. A connection attempt made while such a box was open got `busyError` in our tests, so before running again ask the user to click No on the old box; the next run then shows a fresh one. While the macOS screen saver is on, Sibelius' boxes are hidden and Accessibility lists no Sibelius windows at all. The screen saver is not a lock screen: a Shift key press (`key code 56` through System Events) wakes it. One run is one connection; a second run asks again. The documented `sessionToken` reconnection did not help in practice: on 26.11 a reconnect with a token from a live session got no answer at all, and after a Sibelius restart the token is rejected (`kClientRejected_ConnectTokenRejected`). So the script never stores tokens.
 
 ## The import options box
 
 Opening MusicXML makes Sibelius show "Open MusicXML File" with import options. The plug-in call that opens the file does not return until the box is answered, and `Sibelius.Open(path, True)` (the "quiet" flag) does not suppress it.
 
 - **user-clicks**: the script emits `waiting` / `import-ok` and waits (up to 15 minutes per file). Tell the user to click OK.
-- **agent-clicks** (macOS only): the script presses OK through macOS Accessibility (`osascript` and System Events), with the box's current options. The checkboxes in that box are not exposed to Accessibility, so whatever the user last chose there is used. If the box is not found within 30 seconds (for example a Sibelius in another language, where the box has another title), it falls back to asking the user.
+- **agent-clicks** (macOS only): the script presses OK through macOS Accessibility (`osascript` and System Events), with the box's current options. The checkboxes in that box are not exposed to Accessibility, so whatever the user last chose there is used. It looks in every Sibelius window whose title contains "MusicXML" (the box is "Open MusicXML File"; its OK button sits inside a group of the window) and keeps trying until the import returns. When Accessibility sees no Sibelius windows at all, and every few misses, it presses Shift to wake a screen saver. After 30 seconds without success (for example a Sibelius in another language, where the title differs) it also asks the user to click OK, and keeps trying meanwhile.
   - The first time, macOS asks: "*<your assistant's app>* would like to control this computer using accessibility features" with Open System Settings / Deny. The user grants it in System Settings > Privacy & Security > Accessibility by switching on the app your assistant runs in (Terminal, iTerm, the Claude or Codex app...). macOS may also ask to let it control "System Events" (Automation). Until then osascript fails with error -25211 ("not allowed assistive access"); the script emits `accessibility-needed` and waits for the user to click OK instead.
   - On Windows the script always asks the user.
 
@@ -61,18 +61,22 @@ Human clicks per run: user-clicks = 1 approval + 1 OK per imported file (3 with 
 
 ## What the comments say
 
-One comment per staff and bar, starting with "Import Doctor." and made of the parts that apply:
+Comments go only where the music changed (notes or tremolos), where something could not be fixed, or where Sibelius shows something different from the user's file. Harmless rest-only normalisations (a whole-bar rest set to the length of the bar, rests added so a part fills its bar) are counted but never commented; without that, a 38-bar orchestral score got 299 comments, 253 of them about rest lengths.
 
-- `Fixed: notes past the bar line were trimmed.` (from `--changes`, list `changed`)
-- `Not fixed: voice 2 is still too long.` (from `--changes`, list `unfixed`)
-- `Still differs from your file: 1 note missing (your file has 9, Sibelius shows 8).` (fixed import compared with the original MusicXML; only when both have the same staves and bars)
-- `Sibelius did not import this as the fixed file says: ...` followed by one of: notes missing or extra, tremolos missing, a two-note tremolo inside a tuplet (drawn as double whole notes), notes in a voice running past the bar line, or a bar whose length in Sibelius differs from the music in the file.
+One comment per staff and bar, starting with "Import Doctor:", with every reason for that bar merged into one text, in this order:
+
+- `Changed: 2 notes past the bar line were removed.` (from `--changes`; nothing for the user to do)
+- `Could not be fixed: an unmeasured tremolo was left as it is; Sibelius may drop it.` (from `--changes`)
+- `Still differs from your file: 1 note missing (your file has 9, Sibelius shows 8).` (the fixed import compared with the original MusicXML; only when both have the same staves and bars)
+- `Sibelius shows this differently from the fixed file: ...` followed by one of: notes missing or extra, tremolos missing, a two-note tremolo inside a tuplet (drawn as double whole notes), notes in a voice running past the bar line, or a bar whose length in Sibelius differs from the music in the file.
+
+A bar whose comment has only "Changed" needs nothing from the user; any of the other three means it needs their eyes.
 
 At most 300 comments are added; the JSON details list every bar.
 
 ### The `--changes` file
 
-Normally pass the doctor's own `<name>.report.json`: every bar-level entry of its change log becomes a "Fixed:" comment (rests set to the bar length, rests added, notes past the bar line removed or shortened, tremolos rewritten), and every problem it reports as not fixed becomes a "Not fixed:" comment on each bar it lists. Score-wide changes (short part names, composer) have no bar and get no comment.
+Normally pass the doctor's own `<name>.report.json`: entries of its change log that touch notes or tremolos (notes past the bar line removed or shortened, tremolos rewritten) become "Changed:", and every problem it reports as not fixed becomes "Could not be fixed:" on each bar it lists. Its rest-only fixes (`measure-rest`, `pad`, `pad-empty-measure`) and an unfixed overlong rest are classified as harmless in connect.mjs and get no comment. Score-wide changes (short part names, composer) have no bar and get no comment either.
 
 Any other tool can pass a plain list instead:
 
@@ -83,7 +87,7 @@ Any other tool can pass a plain list instead:
 }
 ```
 
-`part` is the MusicXML part id (a part name also works), `measure` the measure number as printed in the file, or `measureIndex` (1-based position in the part) instead, `staff` the staff inside the part (default 1), `text` a short plain-words description that reads well after "Fixed:" or "Not fixed:". Entries that cannot be placed are listed under `doctorChanges.unplaced` in the details and counted in `doctorEntriesNotPlaced`.
+`part` is the MusicXML part id (a part name also works), `measure` the measure number as printed in the file, or `measureIndex` (1-based position in the part) instead, `staff` the staff inside the part (default 1), `text` a short plain-words description that reads well after "Changed:" or "Could not be fixed:", `harmless: true` for a change that leaves notes and tremolos alone (counted, not commented). Entries that cannot be placed are listed under `doctorChanges.unplaced` in the details and counted in `doctorEntriesNotPlaced`.
 
 ### How bars are compared
 
@@ -118,7 +122,7 @@ Set `SIBELIUS_IMPORT_DOCTOR_DEBUG=1` to log every Connect frame to stderr.
 
 ## Learned the hard way
 
-- **Connecting while Sibelius is still starting**: the port may already accept the WebSocket, which then closes at once with no reason. The script retries every 3 seconds for up to 3 minutes. A close that carries a `kClientRejected_*` reason, or comes after the box has been up for a while, is a refusal and is not retried (retrying would pop the box again).
+- **Connecting while Sibelius is still starting**: the port may already accept the WebSocket, which then closes at once with no reason. On a cold start the socket can also stay open for several seconds and then close without a reason. Only a close whose reason says rejected (`kClientRejected_*`) is treated as the user's No; any other close before an answer means "not ready yet", and the script retries every 3 seconds, for up to 5 minutes when it launched Sibelius itself and 3 minutes otherwise.
 - **`busyError`** ("Sibelius is busy processing a message") answers a connect attempt while a modal dialog is open in Sibelius, including the import box of another client.
 - **One message at a time.** Connect processes one request per connection; replies carry no id. The script keeps one request in flight and treats the connection as unusable after any timeout, because a late reply would otherwise be taken as the answer to the next request.
 - **The reply field is `returnValue`**, although the ManuScript Language Guide's example says `return_value`. `result: false` means the plug-in or method was not found, which is what happens when the plug-in is not installed, was installed while Sibelius was running, or is not listed in the handshake: the handshake's `plugins` array must name every plug-in (file name without extension) the client will call, and it cannot change for the life of the connection.

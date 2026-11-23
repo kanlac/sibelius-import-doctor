@@ -127,8 +127,37 @@ test("comments cover changed, unfixed, differing and mis-imported bars", () => {
   ];
   const comments = buildComments(items);
   assert.equal(comments.length, 2);
-  assert.equal(comments[0].text, "Import Doctor. Fixed: two-note tremolo rewritten.");
-  assert.match(comments[1].text, /^Import Doctor\. Not fixed: voice 5 could not be shortened\. Still differs from your file: 1 note missing \(your file has 1, Sibelius shows 0\)\. Sibelius did not import this as the fixed file says: /);
+  assert.equal(comments[0].text, "Import Doctor: Changed: two-note tremolo rewritten.");
+  assert.equal(comments[0].needsEyes, false);
+  assert.equal(comments[1].needsEyes, true);
+  assert.match(comments[1].text, /^Import Doctor: Could not be fixed: voice 5 could not be shortened\. Still differs from your file: 1 note missing \(your file has 1, Sibelius shows 0\)\. Sibelius shows this differently from the fixed file: /);
+});
+
+test("the doctor's report.json: harmless rest changes get no comment, note and tremolo changes do", () => {
+  const a = analyseScore(loadScore(tmpFile("s.musicxml", SCORE)));
+  const report = tmpFile("r.report.json", JSON.stringify({
+    log: [
+      { part: "P1", measure: 2, number: "1", fix: "measure-rest" },
+      { part: "P2", measure: 2, number: "1", fix: "pad", staff: "2" },
+      { part: "P1", measure: 2, number: "1", fix: "tremolo-pair" },
+      { part: "P1", measure: 2, number: "1", fix: "trim-delete", deleted_noteheads: 2 },
+      { part: "P1", fix: "abbreviation" },
+    ],
+    found: [
+      { kind: "overlong-rest", fixed: false, where: [{ part_id: "P1", part: "Flute", bars: ["1"] }] },
+      { kind: "unmeasured-tremolo", fixed: false, where: [{ part_id: "P2", part: "Piano", bars: ["1"] }] },
+    ],
+  }));
+  const ch = loadChanges(report);
+  assert.equal(ch.harmless, 2);
+  assert.equal(ch.changed.length, 2);
+  assert.equal(ch.unfixed.length, 1);
+  const items = [...ch.changed, ...ch.unfixed].map((e, i) => ({ ...locate(a, e), source: i < ch.changed.length ? "changed" : "unfixed", text: e.text }));
+  const comments = buildComments(items);
+  assert.equal(comments.length, 2);
+  assert.equal(comments[0].text, "Import Doctor: Changed: two-note tremolo rewritten so Sibelius draws it correctly; 2 notes past the bar line were removed.");
+  assert.equal(comments[1].staff, 2);
+  assert.match(comments[1].text, /^Import Doctor: Could not be fixed: an unmeasured tremolo/);
 });
 
 test(".mxl archives are read through META-INF/container.xml", () => {

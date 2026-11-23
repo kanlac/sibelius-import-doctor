@@ -25,7 +25,7 @@ Outputs, always as copies: the fixed MusicXML and a short report of what changed
 
 ## 3. Check it inside Sibelius (optional, needs Sibelius Connect)
 
-Only when Sibelius is installed and the user wants the check, or when the result needs to be sure. It imports the original and the fixed file, reads every note back, compares, and leaves a comment in a saved `.sib` on every bar it changed and every bar it could not fix, saying what happened there. `references/connect.md` has the connection steps, the bridge, and troubleshooting.
+Only when Sibelius is installed and the user wants the check, or when the result needs to be sure. It imports the original and the fixed file, reads every note back, compares, and leaves a comment in a saved `.sib` on every bar where music changed or could not be fixed, and on bars where Sibelius still differs from the file, saying what happened there. `references/connect.md` has the connection steps, the bridge, and troubleshooting.
 
 - **Check the Sibelius version first.** The check is built for Sibelius 26.11 (the November 2026 release), where Connect gained live reading from Sibelius. If the installed version is older, tell the user to update and why, in a sentence, then carry on with step 2 without Connect.
 - **Install the plug-in first.** The check needs a small read-only plug-in inside Sibelius: run `scripts/plugin/install.mjs`, then have the user restart Sibelius once so it loads (details in `references/connect.md`).
