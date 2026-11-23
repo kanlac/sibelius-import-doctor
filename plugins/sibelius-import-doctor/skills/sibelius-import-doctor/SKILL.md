@@ -25,16 +25,16 @@ Outputs, always as copies: the fixed MusicXML and a short report of what changed
 
 ## 3. Check it inside Sibelius (optional, needs Sibelius Connect)
 
-Only when Sibelius is installed and the user wants the check, or when the result needs to be sure. It imports the original and the fixed file, reads every note back, compares, and marks bars that still look wrong as comments in a saved `.sib`. `references/connect.md` has the connection steps, the bridge, and troubleshooting.
+Only when Sibelius is installed and the user wants the check, or when the result needs to be sure. It imports the original and the fixed file, reads every note back, compares, and leaves a comment in a saved `.sib` on every bar it changed and every bar it could not fix, saying what happened there. `references/connect.md` has the connection steps, the bridge, and troubleshooting.
 
-- **Check the Sibelius version first.** This skill was tested on Sibelius 26.11 (the November 2026 release, which added live reading from Sibelius over Connect). On older versions Connect may work differently or not at all. If it is older, recommend updating, in a sentence: this is the version the check was built and tested on, and it is what Avid built Connect's AI-and-automation features around. Do not block: the file fix in step 2 works regardless.
+- **Check the Sibelius version first.** The check is built for Sibelius 26.11 (the November 2026 release), where Connect gained live reading from Sibelius. If the installed version is older, tell the user to update and why, in a sentence, then carry on with step 2 without Connect.
 - **Connect approval is the user's to give.** Sibelius shows an approval box for each new connection; ask the user to click Allow. Never click it for them.
 - **The MusicXML import options box.** Importing pops a box in Sibelius. The first time it matters, ask once: "Do you want to click OK yourself each time, or let me click it for you? (I would need your permission for the computer to be controlled.)" Store the answer with `scripts/config.mjs` and do not ask again; honour it until the user changes their mind. If they chose "you click", say when to click and wait.
 - If Connect cannot be set up, finish with the step-2 result and say that the in-Sibelius check was skipped and why.
 
 ## 4. Hand back
 
-One output folder with the fixed MusicXML, the report, and, if step 3 ran, the `.sib` with comments. Start the reply with the result: how many things were fixed, how many bars still need the user's eyes, and where the files are. Open the fixed file in Sibelius if they want.
+One output folder with the fixed MusicXML, the report, and, if step 3 ran, the `.sib` with those comments. Start the reply with the result: how many things were fixed, how many bars still need the user's eyes, and where the files are. Open the fixed file in Sibelius if they want.
 
 ## Don't
 
