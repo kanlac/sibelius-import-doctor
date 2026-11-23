@@ -26,7 +26,7 @@ Outputs, always as copies: the fixed MusicXML and a short report of what changed
 
 ## 3. Check it inside Sibelius (needs Sibelius Connect)
 
-Do this whenever Sibelius 26.11 or newer is installed; the user should not have to ask. It imports the original and the fixed file, reads every note back, compares them, and saves a `.sib` with short graded comments (Doctor 1 to 3) on the bars where music changed, could not be fixed, or still differs from the file. `references/connect.md` has the steps, the events the script prints, and troubleshooting.
+Do this whenever Sibelius 26.11 or newer is installed; the user should not have to ask. It imports the original and the fixed file, reads every note back, compares them, and saves a `.sib` with short graded comments signed "Doctor" on the bars where music changed, could not be fixed, or still differs from the file. `references/connect.md` has the steps, the events the script prints, and troubleshooting.
 
 - **Version.** Built for Sibelius 26.11 (the November 2026 release, where Connect gained live reading from Sibelius). If the installed version is older, tell the user to update and why, in a sentence, then deliver the step-2 result.
 - **One short heads-up before you start, in one or two plain sentences:** Sibelius has to be restarted once the first time (ask them to save open scores first), it will show a box asking to allow the connection (they click Yes), and two import boxes (OK). Do not list the plug-in, ports or scripts.
@@ -38,7 +38,7 @@ Do this whenever Sibelius 26.11 or newer is installed; the user should not have 
 
 ## 4. Hand back
 
-The first sentence is the before-and-after, from the check's numbers: what Sibelius loses when it imports the original, and what is left after the fix. For example: "Opening your file directly in Sibelius loses 10 notes; the fixed copy keeps all of them, and 2 bars still need your eyes: violin bar 36, harp bar 38." If nothing was wrong, say that and what was compared. Then, shortly: where the files are (full paths, one output folder named after the score), what the comments in the saved `.sib` mean (Doctor 3 serious, 2 please check, 1 changed and fine), and answer the question the user asked in step 1. Say once, in plain words, what you could not check, such as pitches and rhythms bar by bar. Use plain words throughout: no command-line options, no internal names, no "trim", "OMR" or "time modification". A missing composer is a small note, not a problem. Open the fixed file in Sibelius if they want.
+The first sentence is the before-and-after, from the check's numbers: what Sibelius loses when it imports the original, and what is left after the fix. For example: "Opening your file directly in Sibelius loses 10 notes; the fixed copy keeps all of them, and 2 bars still need your eyes: violin bar 36, harp bar 38." If nothing was wrong, say that and what was compared. Then, shortly: where the files are (full paths, one output folder named after the score), what the comments in the saved `.sib` mean (red: serious; amber: please check; grey-green: changed, nothing to do), and answer the question the user asked in step 1. Say once, in plain words, what you could not check, such as pitches and rhythms bar by bar. Use plain words throughout: no command-line options, no internal names, no "trim", "OMR" or "time modification". A missing composer is a small note, not a problem. Open the fixed file in Sibelius if they want.
 
 ## Don't
 

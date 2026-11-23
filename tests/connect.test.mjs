@@ -9,7 +9,29 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const SCRIPTS = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "plugins", "sibelius-import-doctor", "skills", "sibelius-import-doctor", "scripts");
-const { parseXml, loadScore, analyseScore, compare, compareToOriginal, loadChanges, locate, buildComments, doctorItems, LEVEL_COLOR, parseBoxes, openBoxSay, HARMLESS_BOXES } = await import(path.join(SCRIPTS, "connect.mjs"));
+const { parseArgs, importWaitingEvent, parseXml, loadScore, analyseScore, compare, compareToOriginal, loadChanges, locate, buildComments, doctorItems, LEVEL_COLOR, parseBoxes, openBoxSay, HARMLESS_BOXES } = await import(path.join(SCRIPTS, "connect.mjs"));
+
+test("check accepts file (default) or house-style for the import layout", () => {
+  assert.equal(parseArgs(["check"]).importLayout, "file");
+  for (const layout of ["file", "house-style"]) {
+    const opts = parseArgs(["check", "--import-layout", layout, "--import-dialog", "agent-clicks"]);
+    assert.equal(opts.importLayout, layout);
+    assert.equal(opts.importDialog, "agent-clicks");
+  }
+  for (const args of [[], ["auto"]]) {
+    assert.throws(() => parseArgs(["check", "--import-layout", ...args]), { code: "usage", message: /--import-layout/ });
+  }
+});
+
+test("the import waiting event names both boxes and their requested state before OK", () => {
+  const file = path.join("scores", "Score A.musicxml");
+  for (const [layout, action] of [["file", "tick"], ["house-style", "untick"]]) {
+    assert.deepEqual(importWaitingEvent(file, layout), {
+      event: "waiting", for: "import-ok", file,
+      say: `Sibelius is showing its MusicXML import options for "Score A.musicxml". Please ${action} both "Use page and staff size from MusicXML file" and "Use layout and formatting from MusicXML file", then click OK.`,
+    });
+  }
+});
 
 const SCORE = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
@@ -128,21 +150,21 @@ test("comments are graded, short, and drop a count that repeats the import findi
   assert.equal(unplaced.length, 1);
   const comments = buildComments(items);
   assert.equal(comments.length, 2);
-  assert.equal(comments[0].text, "Doctor 1: two-note tremolo rewritten");
+  assert.equal(comments[0].text, "two-note tremolo rewritten");
   assert.equal(comments[0].level, 1);
   assert.equal(comments[0].color, LEVEL_COLOR[1]);
   assert.equal(comments[1].level, 3);
   assert.equal(comments[1].staff, 3);
-  assert.equal(comments[1].text, "Doctor 3: 1 note missing (file 3, Sibelius 2, all staves of the part): lost on import; voice 5 could not be shortened");
+  assert.equal(comments[1].text, "1 note missing (file 3, Sibelius 2, all staves of the part): lost on import; voice 5 could not be shortened");
 });
 
 test("a repeated kind in the same part is only named the second time", () => {
   const item = (bar) => ({ staff: 1, bar, measure: String(bar), part: "Violin", source: "import", kind: "tuplet-lost", short: "tuplet lost (1 note)", explain: "the rhythm is off" });
   const comments = buildComments([item(3), item(7), { ...item(9), part: "Viola" }]);
   assert.deepEqual(comments.map((g) => g.text), [
-    "Doctor 2: tuplet lost (1 note): the rhythm is off",
-    "Doctor 2: same: tuplet lost (1 note)",
-    "Doctor 2: tuplet lost (1 note): the rhythm is off",
+    "tuplet lost (1 note): the rhythm is off",
+    "same: tuplet lost (1 note)",
+    "tuplet lost (1 note): the rhythm is off",
   ]);
 });
 
@@ -240,10 +262,10 @@ test("the doctor's report.json: harmless rest changes get no comment, note and t
   assert.equal(ch.unfixed.length, 1);
   const comments = buildComments(doctorItems(ch, a));
   assert.equal(comments.length, 2);
-  assert.equal(comments[0].text, "Doctor 1: two-note tremolo rewritten: so Sibelius draws it correctly; 2 notes past the bar line removed: Sibelius would have dropped them");
+  assert.equal(comments[0].text, "two-note tremolo rewritten: so Sibelius draws it correctly; 2 notes past the bar line removed: Sibelius would have dropped them");
   assert.equal(comments[1].staff, 2);
   assert.equal(comments[1].level, 2);
-  assert.match(comments[1].text, /^Doctor 2: unmeasured tremolo left as is: Sibelius may drop it$/);
+  assert.match(comments[1].text, /^unmeasured tremolo left as is: Sibelius may drop it$/);
 });
 
 test("bars the doctor kept longer than the time signature are commented at level 2 on the overlong part", () => {
@@ -262,7 +284,7 @@ test("bars the doctor kept longer than the time signature are commented at level
   assert.equal(comments.length, 1);
   assert.equal(comments[0].staff, 1);
   assert.equal(comments[0].part, "Flute & Piccolo");
-  assert.equal(comments[0].text, "Doctor 2: bar longer than the time signature: one note value is probably wrong; compare with the original");
+  assert.equal(comments[0].text, "bar longer than the time signature: one note value is probably wrong; compare with the original");
 });
 
 test("notes the doctor removed are level 2 (compare with the original), replacing the level-1 change", () => {
@@ -273,7 +295,7 @@ test("notes the doctor removed are level 2 (compare with the original), replacin
     needs_attention: [{ kind: "notes-removed", message: "...", where: [{ part: "Flute & Piccolo", bars: ["1"], notes: 1 }] }],
   }));
   const comments = buildComments(doctorItems(loadChanges(report), a));
-  assert.deepEqual(comments.map((g) => g.text), ["Doctor 2: notes past the bar line removed: compare with the original"]);
+  assert.deepEqual(comments.map((g) => g.text), ["notes past the bar line removed: compare with the original"]);
 });
 
 test("a bar Sibelius cut short is reported on the part whose music sets its length, with what to do", () => {
@@ -296,6 +318,8 @@ test("the installer only upgrades, and says so when it keeps a newer plug-in", (
   const run = (...args) => JSON.parse(execFileSync(process.execPath, [path.join(SCRIPTS, "plugin", "install.mjs"), ...args], { env: { ...process.env, SIBELIUS_PLUGINS_DIR: dir }, encoding: "utf8" }));
   const first = run();
   assert.equal(first.changed, true);
+  assert.equal(first.version, "0.3.0");
+  assert.equal(first.installedVersion, first.version);
   const file = first.path;
   const newer = fs.readFileSync(file).toString("utf16le").replace(/'plugin', '[^']*'/, "'plugin', '99.0.0'");
   fs.writeFileSync(file, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(newer.slice(1), "utf16le")]));
@@ -304,7 +328,7 @@ test("the installer only upgrades, and says so when it keeps a newer plug-in", (
   assert.equal(kept.installedVersion, "99.0.0");
   assert.equal(kept.current, true);
   assert.match(kept.note, /newer than this copy/);
-  const older = newer.replace("'99.0.0'", "'0.0.1'");
+  const older = newer.replace("'99.0.0'", "'0.2.0'");
   fs.writeFileSync(file, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(older.slice(1), "utf16le")]));
   assert.equal(run().changed, true);
 });
@@ -314,9 +338,9 @@ test("the same finding in one bar in several parts becomes one comment on the to
   const missing = { staff: 4, bar: 6, measure: "6", part: "Harp", source: "import", kind: "notes-missing", short: "1 note missing (file 4, Sibelius 3)", explain: "lost on import" };
   const comments = buildComments([attn(5, "Oboe 2", 6), attn(2, "Flute 1", 6), attn(7, "Clarinet 1", 6), attn(9, "Horn", 6), missing, attn(2, "Flute 1", 7), attn(3, "Flute 2", 7)]);
   assert.deepEqual(comments.map((g) => [g.bar, g.staff, g.level]), [[6, 2, 2], [6, 4, 3], [7, 2, 2]]);
-  assert.equal(comments[0].text, "Doctor 2: bar longer than the time signature in 4 parts (Oboe 2, Flute 1, Clarinet 1, +1 more): compare with the original");
+  assert.equal(comments[0].text, "bar longer than the time signature in 4 parts (Oboe 2, Flute 1, Clarinet 1, +1 more): compare with the original");
   assert.deepEqual(comments[0].parts, ["Oboe 2", "Flute 1", "Clarinet 1", "Horn"]);
-  assert.equal(comments[2].text, "Doctor 2: same: bar longer than the time signature in 2 parts (Flute 1, Flute 2)");
+  assert.equal(comments[2].text, "same: bar longer than the time signature in 2 parts (Flute 1, Flute 2)");
 });
 
 test("Sibelius' own boxes are recognised from the window list; only known harmless ones may be clicked", () => {

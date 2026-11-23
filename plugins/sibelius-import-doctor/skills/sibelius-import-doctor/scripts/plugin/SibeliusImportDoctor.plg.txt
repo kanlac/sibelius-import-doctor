@@ -6,7 +6,7 @@ AddToPluginsMenu('Sibelius Import Doctor','Run');
 Sibelius.MessageBox('Sibelius Import Doctor is installed. Your AI assistant uses it through Sibelius Connect to read notes back after an import. There is nothing to do here.');
 }"
 	Ping "() {
-return CreateDictionary('plugin', '0.2.0', 'programVersion', Sibelius.ProgramVersion, 'scores', Sibelius.ScoreCount);
+return CreateDictionary('plugin', '0.3.0', 'programVersion', Sibelius.ProgramVersion, 'scores', Sibelius.ScoreCount);
 }"
 	OpenFile "(path) {
 ok = Sibelius.Open(path, True);
@@ -60,11 +60,11 @@ while (b <= st.BarCount) {
 }
 return out;
 }"
-	Comment "(staffNum, barNum, text, color, maximized) {
+	Comment "(staffNum, barNum, text, color, level) {
 score = Sibelius.ActiveScore;
 st = score.NthStaff(staffNum);
 bar = st.NthBar(barNum);
-bar.AddCommentWithName(0, text, 'Doctor', color, maximized);
+bar.AddCommentWithName(0, text, 'Doctor', color, (level = 3));
 return True;
 }"
 	SaveSib "(path) {

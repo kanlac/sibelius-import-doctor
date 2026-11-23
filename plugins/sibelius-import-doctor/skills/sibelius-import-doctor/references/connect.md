@@ -34,8 +34,8 @@ This is step 3 of SKILL.md. `scripts/connect.mjs` opens the user's original and 
    | `dismissed-sibelius-box` | agent-clicks only: the script clicked OK on a box it knows is harmless (`box`) |
    | `waiting`, `for: "sibelius-busy"` | Sibelius is busy and no box can be seen (Accessibility not allowed, or not macOS): ask the user to close any open box |
    | `connected` | approved |
-   | `waiting`, `for: "import-ok"` | the import options box is up: ask the user to click OK |
-   | `agent-cannot-click` | agent-clicks was chosen but the click is not possible: `reason` is `accessibility-permission` (macOS refused; see below), `box-not-found` (nothing found within 30 s; it keeps trying) or `not-macos`. Pass its `say` sentence on: the user must click OK now. A `waiting` / `import-ok` line follows |
+   | `waiting`, `for: "import-ok"` | pass on `say`: it names both layout boxes, their requested state and when to click OK |
+   | `agent-cannot-click` | `reason` is `accessibility-permission`, `layout-unavailable` (cannot confirm the requested settings), `box-not-found` (nothing found within 30 s; it keeps trying) or `not-macos`. Relay the instructions; a `waiting` / `import-ok` line follows |
    | `done` | finished; exit code 0 |
    | `error` | `code`, `message`, `hint`; exit code 1 |
 
@@ -54,24 +54,26 @@ This is the user's decision. Ask them to click Yes; never click it for them, in 
 
 Opening MusicXML makes Sibelius show "Open MusicXML File" with import options. The plug-in call that opens the file does not return until the box is answered, and `Sibelius.Open(path, True)` (the "quiet" flag) does not suppress it.
 
-- **user-clicks**: the script emits `waiting` / `import-ok` and waits (up to 15 minutes per file). Tell the user to click OK.
-- **agent-clicks** (macOS only): the script presses OK through macOS Accessibility (`osascript` and System Events), with the box's current options. The checkboxes in that box are not exposed to Accessibility, so whatever the user last chose there is used. It looks in every Sibelius window whose title contains "MusicXML" (the box is "Open MusicXML File"; its OK button sits inside a group of the window) and keeps trying until the import returns. When Accessibility sees no Sibelius windows at all, and every few misses, it presses Shift to wake a screen saver. After 30 seconds without success (for example a Sibelius in another language, where the title differs) it also asks the user to click OK, and keeps trying meanwhile.
+`check --import-layout file|house-style` applies to both the original and fixed imports. `file` (the default) uses the page size, staff size and formatting from the MusicXML: both **Use page and staff size from MusicXML file** and **Use layout and formatting from MusicXML file** should be checked. `house-style` leaves both unchecked so Sibelius supplies the layout instead. Try it when a scanned score's titles and instrument names overlap. Neither mode changes the MusicXML or the note readback and comparison rules.
+
+- **user-clicks**: relay the `waiting` / `import-ok` instructions for each file. The user sets the two boxes and presses OK; the script waits up to 15 minutes per file.
+- **agent-clicks** (macOS only): the script searches the “Open MusicXML File” window, including nested groups, for the two named Accessibility buttons or checkboxes. It clicks only controls in the wrong state and checks their values before pressing OK. If either setting cannot be confirmed, it leaves OK to the user. This requires live verification on 26.11. If the window cannot be found (for example, its title is translated), the script also asks the user after 30 seconds. It may press Shift to wake a screen saver while waiting.
   - The first time, macOS asks: "*<your assistant's app>* would like to control this computer using accessibility features" with Open System Settings / Deny. The user grants it in System Settings > Privacy & Security > Accessibility by switching on the app your assistant runs in (Terminal, iTerm, the Claude or Codex app...). macOS may also ask to let it control "System Events" (Automation). Until then osascript fails with error -25211 ("not allowed assistive access"); the script emits `agent-cannot-click` with reason `accessibility-permission` and waits for the user to click OK instead.
   - On Windows the script always asks the user.
 
-Human clicks per run: user-clicks = 1 approval + 1 OK per imported file (3 with `--original`); agent-clicks = 1 (the approval).
+The user always handles the connection approval. In user-clicks mode they also handle each import box.
 
 ## What the comments say
 
-Comments go only where the music changed (notes or tremolos), where something could not be fixed, or where Sibelius shows something different from the user's file. Harmless rest-only normalisations (a whole-bar rest set to the length of the bar, rests added so a part fills its bar) are counted but never commented; without that, a 38-bar orchestral score got 299 comments, 253 of them about rest lengths. That rule never hides a bar the doctor tells the user to look at: every bar in the doctor's `needs_attention` list gets a level-2 comment. In pad mode, the bars it kept longer than the time signature (padding the other parts with rests) are commented: `Doctor 2: bar longer than the time signature in 5 parts (Clarinet 1, Oboe 2, Harp, +2 more): one note value is probably wrong; compare with the original`. In trim mode, notes it removed past a bar line are level 2 ("compare with the original") instead of a level-1 change.
+Comments go only where the music changed (notes or tremolos), where something could not be fixed, or where Sibelius shows something different from the user's file. Harmless rest-only normalisations (a whole-bar rest set to the length of the bar, rests added so a part fills its bar) are counted but never commented; without that, a 38-bar orchestral score got 299 comments, 253 of them about rest lengths. That rule never hides a bar the doctor tells the user to look at: every bar in the doctor's `needs_attention` list gets a level-2 comment. In pad mode, the bars it kept longer than the time signature (padding the other parts with rests) are commented: `bar longer than the time signature in 5 parts (Clarinet 1, Oboe 2, Harp, +2 more): one note value is probably wrong; compare with the original`. In trim mode, notes it removed past a bar line are level 2 ("compare with the original") instead of a level-1 change.
 
 One comment per staff and bar, signed "Doctor", graded, and as short as it can be while saying what and how much:
 
 | level | meaning | colour | shown | example |
 |---|---|---|---|---|
-| 1 | changed, nothing to do | grey-green | minimised | `Doctor 1: two-note tremolo rewritten: so Sibelius draws it correctly` |
-| 2 | please check | amber | open | `Doctor 2: tuplet lost (1 note), bar lasts 4.17 quarters (file 4): plain notes in Sibelius, rhythm off` |
-| 3 | serious: music lost or added that the doctor could not fix | red | open | `Doctor 3: 1 note missing (file 4, Sibelius 3): lost on import` |
+| 1 | changed, nothing to do | grey-green | minimised | `two-note tremolo rewritten: so Sibelius draws it correctly` |
+| 2 | please check | amber | minimised | `tuplet lost (1 note), bar lasts 4.17 quarters (file 4): plain notes in Sibelius, rhythm off` |
+| 3 | serious: music lost or added that the doctor could not fix | red | open | `1 note missing (file 4, Sibelius 3): lost on import` |
 
 - The same finding (same kind and wording) in the same bar in several parts becomes **one** comment on the topmost of those staves, with the number of parts and the first three names, e.g. `in 5 parts (Clarinet 1, Oboe 2, Harp, +2 more)`. Findings that differ between parts (notes missing with their counts, a lost tuplet, ...) stay on their own staff. Score A in pad mode went from 64 comments (one per overlong part) to 18, one per affected bar. The details JSON keeps every part (`problems`, and `parts` on each comment).
 - The comment takes the highest level of its findings; findings are listed highest first, separated by "; ".
@@ -82,7 +84,9 @@ One comment per staff and bar, signed "Doctor", graded, and as short as it can b
 
 ### Colour and author: what the plug-in uses
 
-The ManuScript Language Guide for 26.11 documents `Bar.AddCommentWithName(sr, text, username[, color[, maximized]])`: a per-comment user name, an optional colour and whether the comment opens maximised. The plug-in calls it with the name "Doctor", so the comments do not show the user's own name and no Sibelius preference is touched. The guide does not spell out the colour format for comments; the plug-in passes the 24-bit RGB value ManuScript uses for object colours (red × 65536 + green × 256 + blue). Avid's online Reference Guide could not be reached to check how comment colours look in the Review tab, so if Sibelius ignores the colour, the level marker in the text still carries the grade.
+The installed 26.11 *ManuScript Language* guide (p. 54, `Bar.AddCommentWithName`) documents separate colour and `maximized` arguments. Omitting `maximized` opens the comment; `False` minimises it. The plug-in supplies the author “Doctor”, a 24-bit RGB colour, and `False` for levels 1 and 2 or `True` for level 3. The level is not part of the text.
+
+The language guide does not say whether the minimised marker displays the supplied colour. The installed *Sibelius Reference* (p. 789, “Resizing a Comment”) illustrates a pale yellow marker with the author's initials. That shows a minimised marker can have a coloured background, not that it retains a plug-in's custom colour. Verify the severity colours and open/minimised states in a saved and reopened `.sib`; the JSON retains the numeric grades independently of their appearance.
 
 At most 300 comments are added; the JSON details list every bar.
 
