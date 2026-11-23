@@ -554,12 +554,12 @@ class Session {
       const r = await this.attempt(approvalMs);
       if (r === "ok") return;
       if (r === "denied") throw new Fail("not-allowed", "Sibelius did not allow the connection (No was clicked, or the box was closed).", "Ask the user whether to try again; then they click Yes.");
-      if (r === "timeout") throw new Fail("approval-timeout", "Nobody answered Sibelius' connection box in time.", "Ask the user to look for the Sibelius box asking to allow remote control, then run the check again.");
+      if (r === "timeout") throw new Fail("approval-timeout", "Nobody answered Sibelius' connection box in time.", "The box stays open in Sibelius. Ask the user to click No on it, then run the check again and click Yes on the new box.");
       if (Date.now() - t0 > startupMs) {
-        if (r === "busy") throw new Fail("sibelius-busy", "Sibelius is busy: a dialog box is probably open.", "Ask the user to close any open dialog in Sibelius, then run again.");
+        if (r === "busy") throw new Fail("sibelius-busy", "Sibelius is busy: a dialog box is open, often a connection box left over from an earlier attempt.", "Ask the user to close any open dialog in Sibelius (for a leftover connection box, click No), then run again.");
         throw new Fail("no-connect", "Could not reach Sibelius Connect.", "Make sure Sibelius is open and finished starting, and that Preferences > Input Devices > Sibelius Connect allows remote control on this port.");
       }
-      if (r === "busy" && !busyNoted) { busyNoted = true; emit({ event: "waiting", for: "sibelius-busy", say: "Sibelius is busy, probably with an open dialog box. Please close it." }); }
+      if (r === "busy" && !busyNoted) { busyNoted = true; emit({ event: "waiting", for: "sibelius-busy", say: "Sibelius has a dialog box open. Please close it; if it is an old box asking to allow a connection, click No (a new one will follow)." }); }
       if (r === "starting") say("Sibelius is still starting; retrying...");
       await sleep(3000);
     }

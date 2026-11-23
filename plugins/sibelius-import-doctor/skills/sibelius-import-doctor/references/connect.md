@@ -46,7 +46,7 @@ Each new Connect connection makes Sibelius ask:
 
 > Application "Sibelius Import Doctor" is trying to connect to Sibelius for remote control. Do you want to allow it to invoke commands and ManuScript plug-ins?  [No] [Yes]
 
-This is the user's decision. Ask them to click Yes; never click it for them, in either mode, and never script it. The check waits up to 5 minutes (`SIBELIUS_IMPORT_DOCTOR_APPROVAL_SECONDS` changes that). One run is one connection; a second run asks again. The documented `sessionToken` reconnection did not help in practice: on 26.11 a reconnect with a token from a live session got no answer at all, and after a Sibelius restart the token is rejected (`kClientRejected_ConnectTokenRejected`). So the script never stores tokens.
+This is the user's decision. Ask them to click Yes; never click it for them, in either mode, and never script it. The check waits up to 5 minutes (`SIBELIUS_IMPORT_DOCTOR_APPROVAL_SECONDS` changes that). If the check gives up, **the box stays open in Sibelius** (seen on 26.11): closing the WebSocket does not withdraw it. A connection attempt made while such a box was open got `busyError` in our tests, so before running again ask the user to click No on the old box; the next run then shows a fresh one. Behind a screen saver the box is invisible, and macOS Accessibility does not list it either. One run is one connection; a second run asks again. The documented `sessionToken` reconnection did not help in practice: on 26.11 a reconnect with a token from a live session got no answer at all, and after a Sibelius restart the token is rejected (`kClientRejected_ConnectTokenRejected`). So the script never stores tokens.
 
 ## The import options box
 
@@ -97,8 +97,8 @@ Notes are counted per staff and bar: chord notes and grace notes count, rests do
 | `no-sibelius` | Sibelius is not installed; skip step 3 |
 | `no-connect` | Sibelius not reachable: is it open and finished starting? Is Connect switched on, on that port? |
 | `not-allowed` | No was clicked (or the box was closed). Ask whether to try again |
-| `approval-timeout` | nobody answered the box; ask the user to look for it and run again |
-| `sibelius-busy` | a dialog is open in Sibelius; ask the user to close it |
+| `approval-timeout` | nobody answered; the box is still open. Ask the user to click No on it, then run again and click Yes |
+| `sibelius-busy` | a dialog is open in Sibelius, often a leftover connection box; ask the user to close it (No on a leftover connection box) |
 | `plugin-missing` / `plugin-outdated` | run `scripts/plugin/install.mjs`, then the user restarts Sibelius |
 | `import-failed` | the import box was cancelled, or Sibelius could not read the file |
 | `sibelius-closed` | Sibelius quit or crashed during the run; see below |
