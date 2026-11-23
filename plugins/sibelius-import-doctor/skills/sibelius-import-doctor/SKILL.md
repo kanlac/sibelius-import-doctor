@@ -15,6 +15,7 @@ Everything below runs with Node.js 22 or newer (this skill's `scripts/`). If Nod
 
 - **MusicXML (`.musicxml`, `.xml`, `.mxl`)**: continue.
 - **Only a PDF**: this skill does not read PDFs. Use the `sheetmusic-pdf-convert` skill (https://github.com/kanlac/sheetmusic-pdf-convert); if it is not installed, install it from there, then come back with the MusicXML it produces.
+- Ask what looked wrong in Sibelius, if the user has not said (a missing note, a strange tremolo, a bar that looks too long). After the check, answer that specific thing, even when the answer is that nothing is wrong.
 - **A `.sib` file that already looks wrong**: the damage happened at import time; ask for the original MusicXML.
 
 ## 2. Find the problems (no Sibelius needed)
@@ -23,19 +24,21 @@ Run `node scripts/doctor.mjs <file> <output folder>` (it never changes the file;
 
 Outputs, always as copies: the fixed MusicXML and a short report of what changed and what did not. Never claim the file is perfect; report only what can be checked.
 
-## 3. Check it inside Sibelius (optional, needs Sibelius Connect)
+## 3. Check it inside Sibelius (needs Sibelius Connect)
 
-Only when Sibelius is installed and the user wants the check, or when the result needs to be sure. It imports the original and the fixed file, reads every note back, compares, and leaves a comment in a saved `.sib` on every bar where music changed or could not be fixed, and on bars where Sibelius still differs from the file, saying what happened there. `references/connect.md` has the connection steps, the bridge, and troubleshooting.
+Do this whenever Sibelius 26.11 or newer is installed; the user should not have to ask. It imports the original and the fixed file, reads every note back, compares them, and saves a `.sib` with short graded comments (Doctor 1 to 3) on the bars where music changed, could not be fixed, or still differs from the file. `references/connect.md` has the steps, the events the script prints, and troubleshooting.
 
-- **Check the Sibelius version first.** The check is built for Sibelius 26.11 (the November 2026 release), where Connect gained live reading from Sibelius. If the installed version is older, tell the user to update and why, in a sentence, then carry on with step 2 without Connect.
-- **Install the plug-in first.** The check needs a small read-only plug-in inside Sibelius: run `scripts/plugin/install.mjs`, then have the user restart Sibelius once so it loads (details in `references/connect.md`).
-- **Connect approval is the user's to give.** Sibelius shows an approval box for each new connection; ask the user to click Yes. Never click it for them.
-- **The MusicXML import options box.** Importing pops a box in Sibelius. The first time it matters, ask once: "Do you want to click OK yourself each time, or let me click it for you? (I would need your permission for the computer to be controlled.)" Store the answer with `scripts/config.mjs` and do not ask again; honour it until the user changes their mind. If they chose "you click", say when to click and wait.
-- If Connect cannot be set up, finish with the step-2 result and say that the in-Sibelius check was skipped and why.
+- **Version.** Built for Sibelius 26.11 (the November 2026 release, where Connect gained live reading from Sibelius). If the installed version is older, tell the user to update and why, in a sentence, then deliver the step-2 result.
+- **One short heads-up before you start, in one or two plain sentences:** Sibelius has to be restarted once the first time (ask them to save open scores first), it will show a box asking to allow the connection (they click Yes), and two import boxes (OK). Do not list the plug-in, ports or scripts.
+- **Plug-in.** Run `scripts/plugin/install.mjs`; it is read-only inside Sibelius. If it changed, Sibelius must be restarted before the check.
+- **The connection box is the user's to answer.** Never click it for them.
+- **The import options box.** Ask once, in one line, who clicks OK: the user themselves, or you (that needs the computer-control permission). Store the answer with `scripts/config.mjs` and do not ask again unless they change their mind.
+- **Stay until it finishes.** Run the check so you see its events and keep going until it prints `done` or an error; do not end your turn while Sibelius is still waiting for the user. Pass on every prompt it prints (such as needing the user to click OK because the computer cannot be controlled) in plain words at once.
+- If Connect cannot be set up, deliver the step-2 result and say the in-Sibelius check was skipped and why.
 
 ## 4. Hand back
 
-One output folder with the fixed MusicXML, the report, and, if step 3 ran, the `.sib` with those comments. Start the reply with the result: how many things were fixed, how many bars still need the user's eyes, and where the files are. Open the fixed file in Sibelius if they want.
+The first sentence is the before-and-after, from the check's numbers: what Sibelius loses when it imports the original, and what is left after the fix. For example: "Opening your file directly in Sibelius loses 10 notes; the fixed copy keeps all of them, and 2 bars still need your eyes: violin bar 36, harp bar 38." If nothing was wrong, say that and what was compared. Then, shortly: where the files are (full paths, one output folder named after the score), what the comments in the saved `.sib` mean (Doctor 3 serious, 2 please check, 1 changed and fine), and answer the question the user asked in step 1. Say once, in plain words, what you could not check, such as pitches and rhythms bar by bar. Use plain words throughout: no command-line options, no internal names, no "trim", "OMR" or "time modification". A missing composer is a small note, not a problem. Open the fixed file in Sibelius if they want.
 
 ## Don't
 
