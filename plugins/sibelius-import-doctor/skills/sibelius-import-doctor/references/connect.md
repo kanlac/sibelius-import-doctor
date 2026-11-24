@@ -1,6 +1,6 @@
 # Checking the result inside Sibelius (Sibelius Connect)
 
-This is step 3 of SKILL.md. `scripts/connect.mjs` opens the user's original and fixed MusicXML in Sibelius, reads every note back through a small ManuScript plug-in, compares each bar with the files, and saves a `.sib` with a comment on every bar where music changed or could not be fixed, and on bars where Sibelius still differs from the file. Comments are the point of the step: they let the user jump straight to the bars that need their eyes. Comments do not survive MusicXML export, so the `.sib` is what the user keeps.
+This is step 3 of SKILL.md. The check uses a small ManuScript plug-in to compare the original and fixed imports with their MusicXML. It checks note counts by part and bar, bar lengths, tuplets and tremolos. It saves a Sibelius score with comments on changes and issues that need review.
 
 ## What it needs
 
@@ -63,7 +63,7 @@ The user always handles the connection approval. In user-clicks mode they also h
 
 ## What the comments say
 
-Comments go only where the music changed (notes or tremolos), where something could not be fixed, or where Sibelius shows something different from the user's file. Harmless rest-only normalisations (a whole-bar rest set to the length of the bar, rests added so a part fills its bar) are counted but never commented; without that, a 38-bar orchestral score got 299 comments, 253 of them about rest lengths. That rule never hides a bar the doctor tells the user to look at: every bar in the doctor's `needs_attention` list gets a level-2 comment. In pad mode, the bars it kept longer than the time signature (padding the other parts with rests) are commented: `bar longer than the time signature in 5 parts (Clarinet 1, Oboe 2, Harp, +2 more): one note value is probably wrong; compare with the original`. In trim mode, notes it shortened or removed at a bar line are level 2 ("compare with the original") instead of a level-1 change.
+Comments go only where the music changed (notes or tremolos), where something could not be fixed, or where Sibelius shows something different from the user's file. Harmless rest-only normalisations (a whole-bar rest set to the length of the bar, rests added so a part fills its bar) are counted but never commented; without that, a 38-bar orchestral score got 299 comments, 253 of them about rest lengths. Bars in the doctor's `needs_attention` list stay eligible for level-2 comments. In pad mode, the bars it kept longer than the time signature (padding the other parts with rests) are commented: `bar longer than the time signature in 5 parts (Clarinet 1, Oboe 2, Harp, +2 more): one note value is probably wrong; compare with the original`. In trim mode, notes it shortened or removed at a bar line are level 2 ("compare with the original") instead of a level-1 change.
 
 One comment per staff and bar, signed "Doctor", graded, and as short as it can be while saying what and how much:
 
@@ -113,7 +113,7 @@ MusicXML `<staff>` numbers map to the Sibelius staves of the part in order, and 
 - **Tuplet lost, reported as such.** Notes the file puts in a tuplet (`<time-modification>`) are counted per part and bar and compared with the note-rests Sibelius has inside a tuplet. When Sibelius has fewer, those notes are plain notes in Sibelius and the bar usually grows by the difference: a triplet eighth played as a plain eighth adds 128 - 85.33 = 42.67 ticks, so the bar reads 4.16 or 4.17 quarter notes instead of 4. Rounding cannot produce that, so the comment says the rhythm is off and gives the bar length.
 - **Anything else is a bar-length problem**, e.g. the Score A case: notes past the bar line that Sibelius drops or keeps by changing the bar. Those are always reported, on the part that causes them: the part whose music in the file sets the bar's length when that differs from the time signature, else the part whose notes run past the bar line in Sibelius, else the first part with notes in that bar. The comment says what to do, e.g. `bar lasts 1.5 quarters in Sibelius (file 2): Sibelius cut the bar; compare the rhythm with the original`.
 
-For every bar with a bar-length or tuplet problem, the details JSON keeps what Sibelius holds there (`sibeliusEvidence`: the bar length and the raw plug-in rows: staff, bar, position, duration, voice, note count, tuplet left and right, two-note and single tremolo, grace), so a doubtful case can be settled from the data without reopening Sibelius.
+For the first 20 bars with a bar-length or tuplet problem, the details JSON keeps what Sibelius holds there (`sibeliusEvidence`: the bar length and the raw plug-in rows: staff, bar, position, duration, voice, note count, tuplet left and right, two-note and single tremolo, grace), so a doubtful case can be settled from the data without reopening Sibelius.
 
 ## Errors and what to do
 

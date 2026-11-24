@@ -26,7 +26,7 @@ Outputs, always as copies: the fixed MusicXML and a short report of what changed
 
 ## 3. Check it inside Sibelius (needs Sibelius Connect)
 
-Do this whenever Sibelius 26.11 or newer is installed; the user should not have to ask. It imports the original and the fixed file, reads every note back, compares them, and saves a `.sib` with short graded comments signed "Doctor" on the bars where music changed, could not be fixed, or still differs from the file. `references/connect.md` has the steps, the events the script prints, and troubleshooting.
+Do this whenever Sibelius 26.11 or newer is installed; the user should not have to ask. It compares the original and fixed imports and saves a `.sib` with short graded comments signed "Doctor" on the bars where music changed, could not be fixed, or still differs from the file. `references/connect.md` has the steps, the events the script prints, and troubleshooting.
 
 - **Version.** Built for Sibelius 26.11 (the November 2026 release, where Connect gained live reading from Sibelius). If the installed version is older, tell the user to update and why, in a sentence, then deliver the step-2 result.
 - **One short heads-up before you start, in one or two plain sentences:** Sibelius has to be restarted once the first time (ask them to save open scores first), it will show a box asking to allow the connection (they click Yes), and usually two import boxes (OK). Do not list the plug-in, ports or scripts.
@@ -44,5 +44,5 @@ Lead with the before-and-after and the bars that still need review. Say what was
 
 - Do not edit the original, or rewrite notes from your own reading of the music: only apply the documented fixes.
 - Do not say "perfect" or "all fixed". Say what was checked.
-- Do not click permission boxes on the user's behalf unless they chose that in step 3.
+- Leave permission prompts to the user.
 - Do not send the user's files anywhere.

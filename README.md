@@ -16,7 +16,7 @@ The assistant installs the skill (and what it needs, such as Node.js) and does t
 
 1. It looks through your MusicXML for things Sibelius is known to mishandle and tells you where they are, in bar numbers.
 2. It writes a fixed copy and a short report. Your original is never changed.
-3. It opens the result in Sibelius through [Sibelius Connect](https://www.avid.com/sibelius), reads every note back and compares it with your file. When it is done, **it leaves a comment in your score on every bar where music changed or could not be fixed, and on bars where Sibelius still differs from your file**, saying what happened there, so you can go straight to the places that need your eyes. Comments do not travel with MusicXML, so you get them in the saved Sibelius file.
+3. It compares the original and fixed imports through [Sibelius Connect](https://www.avid.com/sibelius): note counts by part and bar, bar lengths, tuplets and tremolos. It saves a Sibelius score with comments where the music changed or needs review.
 
 The file fix works without Sibelius Connect; the Sibelius step needs Sibelius 26.11 (November 2026) or newer, the release where Connect gained live reading from Sibelius. If yours is older, the assistant will suggest updating.
 
