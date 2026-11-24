@@ -22,6 +22,14 @@ The file fix works without Sibelius Connect; the Sibelius step needs Sibelius 26
 
 Only have a PDF? Your assistant will use [sheetmusic-pdf-convert](https://github.com/kanlac/sheetmusic-pdf-convert) to get a MusicXML first.
 
+## Why Sibelius Connect and not computer use?
+
+An assistant with computer use can drive Sibelius by looking at screenshots. This skill reads the score through Sibelius Connect instead:
+
+- **Cheaper and faster.** No screenshots go to the model and nothing waits on the screen: opening both versions and reading them back takes about 10 seconds per score (7 to 56 seconds across the 22 real scores we ran).
+- **Exact.** The plug-in reads every note, bar, tuplet and tremolo straight from Sibelius' own data. A score has thousands of notes, and counting those by eye from images is not reliable.
+- **Stable and repeatable.** Same file in, same result out. It does not depend on window positions, zoom or what happens to be on screen. Computer use is only an optional helper for clicking Sibelius' import box.
+
 ## What to expect
 
 Not every problem can be fixed automatically, and the report says what was checked and what was not. Tested on macOS with Claude Code and Codex; Windows paths are documented but untested.
