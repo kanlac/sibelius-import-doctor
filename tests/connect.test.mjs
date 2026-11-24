@@ -432,3 +432,16 @@ test("closing a busy attempt does not break a subsequently approved connection",
   assert.equal(await session.plugin("Ping"), "ready");
   session.close();
 });
+
+test("a grace-only shortfall names the missing grace notes", () => {
+  const xml = analyseScore(loadScore(tmpFile("grace.musicxml", SCORE)));
+  const rows = PERFECT.filter((row) => !row[10]);
+  const c = compare(xml, INFO, rows, LENGTHS);
+  assert.equal(c.lost, 1);
+  assert.deepEqual(c.problems.map((p) => p.short), ["1 grace note missing (file 1, Sibelius 0)"]);
+  const vs = compareToOriginal(xml, c.cells, LENGTHS.length);
+  const comments = buildComments([...c.problems, ...vs.bars.map((p) => ({ ...p, source: "differs-from-original" }))]);
+  assert.equal(comments.length, 1);
+  assert.equal(comments[0].level, 3);
+  assert.equal(comments[0].text, "1 grace note missing (file 1, Sibelius 0): lost on import");
+});

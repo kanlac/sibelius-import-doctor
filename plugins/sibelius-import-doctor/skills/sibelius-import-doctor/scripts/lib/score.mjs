@@ -142,18 +142,32 @@ export function partNames(root) {
 
 const ticks = (dur, divisions, what) => new Frac(toInt(dur, what) * TICKS_PER_QUARTER, divisions);
 
-/** Duration of a metered bar, including signatures such as 2/4 + 3/8 or 3+2/8. */
+function meterPair(numerator, denominator) {
+  const groups = numerator.split("+").map((n) => n.trim());
+  if (!groups.every((n) => /^\d+$/.test(n) && Number(n) > 0) || !/^\d+$/.test(denominator) || Number(denominator) === 0) return null;
+  const beats = groups.reduce((sum, n) => sum + Number(n), 0);
+  return new Frac(beats * 4 * TICKS_PER_QUARTER, Number(denominator));
+}
+
+/** Duration of a metered bar, including composite signatures and equivalent alternatives. */
 export function meterTicks(time) {
   const numerators = kids(time, "beats");
   const denominators = kids(time, "beat-type");
   if (!numerators.length || numerators.length !== denominators.length) return null;
   let length = new Frac(0);
+  const alternative = /^([^()]+?)\s*\(([^()]+)\)$/;
   for (const [i, numerator] of numerators.entries()) {
-    const groups = (text(numerator) ?? "").split("+").map((n) => n.trim());
+    const beats = (text(numerator) ?? "").trim();
     const unit = (text(denominators[i]) ?? "").trim();
-    if (!groups.every((n) => /^\d+$/.test(n) && Number(n) > 0) || !/^\d+$/.test(unit) || Number(unit) === 0) return null;
-    const beats = groups.reduce((sum, n) => sum + Number(n), 0);
-    length = length.add(new Frac(beats * 4 * TICKS_PER_QUARTER, Number(unit)));
+    const nb = alternative.exec(beats), db = alternative.exec(unit);
+    const primary = meterPair(nb?.[1] ?? beats, db?.[1] ?? unit);
+    if (!primary || Boolean(nb) !== Boolean(db)) return null;
+    // Some exporters write 6 (3) over 8 (4) in one pair. Both readings must agree.
+    if (nb) {
+      const other = meterPair(nb[2].trim(), db[2].trim());
+      if (!other || !primary.eq(other)) return null;
+    }
+    length = length.add(primary);
   }
   return length;
 }

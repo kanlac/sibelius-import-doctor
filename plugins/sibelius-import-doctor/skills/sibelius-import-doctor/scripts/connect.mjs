@@ -74,7 +74,7 @@ function measureFacts(m, st) {
   // partTrem: tremolos of the whole part, one per voice and onset, so a chord spread over two staves
   // (cross-staff notation) counts once, as Sibelius shows it.
   // tuplets: onsets of notes the file puts in a tuplet (<time-modification>), one per voice and onset.
-  const f = { number: attr(m, "number") ?? "", implicit: attr(m, "implicit") === "yes", heads: {}, partTrem: { single: new Set(), double: new Set() }, tuplets: new Set(), fill: 0 };
+  const f = { number: attr(m, "number") ?? "", implicit: attr(m, "implicit") === "yes", heads: {}, graceHeads: 0, partTrem: { single: new Set(), double: new Set() }, tuplets: new Set(), fill: 0 };
   let pos = 0, lastStart = 0, lastVoice = "1";
   for (const el of kids(m)) {
     if (el.name === "attributes") {
@@ -97,6 +97,7 @@ function measureFacts(m, st) {
       if (!isChord) { lastStart = pos; pos += d; f.fill = Math.max(f.fill, pos); }
       if (isRest) continue;
       f.heads[staff] = (f.heads[staff] || 0) + 1;
+      if (isGrace) f.graceHeads += 1;
       if (!isGrace && kid(el, "time-modification")) f.tuplets.add(`${voice}@${start}`);
       for (const kind of tremoloKinds(el)) {
         const set = kind === "single" || kind === "unmeasured" ? f.partTrem.single : kind === "start" ? f.partTrem.double : null;
@@ -136,6 +137,7 @@ export function analyseScore(root) {
       staves: Array.from({ length: st.staves }, (_, k) => first + k),
       bars: facts.map((f) => ({
         heads: Object.values(f.heads).reduce((a, n) => a + n, 0),
+        graceHeads: f.graceHeads,
         single: f.partTrem.single.size,
         double: f.partTrem.double.size,
         tuplets: f.tuplets.size,
@@ -170,8 +172,9 @@ export function analyseReadback(rows, barLengths) {
   for (const r of rows) {
     const [s, b, pos, dur, voice, count, tl, tr, dtrem, strem, grace] = r;
     const key = `${s}:${b}`;
-    const c = cells.get(key) || { heads: 0, single: 0, double: 0, doubleInTuplet: 0, tuplets: 0, tupletGroups: 0 };
+    const c = cells.get(key) || { heads: 0, graceHeads: 0, single: 0, double: 0, doubleInTuplet: 0, tuplets: 0, tupletGroups: 0 };
     c.heads += count;
+    if (grace) c.graceHeads += count;
     if (tl && !grace) {
       if (count > 0) c.tuplets += 1;
       c.tupletGroups += 1 / tl; // a 3:2 group of three note-rests adds up to one group
@@ -216,9 +219,9 @@ const counts = (file, sib, whole, fileWord = "file") => `(${fileWord} ${file}, S
 // harp or accordion parts), which is not a loss. Such moves are only counted (movedBetweenStaves).
 // A part-level difference is reported on the staff of the part where it shows most.
 function partCell(cells, part, b) {
-  const per = part.staves.map((s) => ({ s, c: cells.get(`${s}:${b}`) || { heads: 0, single: 0, double: 0, doubleInTuplet: 0, tuplets: 0, tupletGroups: 0 } }));
+  const per = part.staves.map((s) => ({ s, c: cells.get(`${s}:${b}`) || { heads: 0, graceHeads: 0, single: 0, double: 0, doubleInTuplet: 0, tuplets: 0, tupletGroups: 0 } }));
   const sum = (k) => per.reduce((a, x) => a + x.c[k], 0);
-  return { per, heads: sum("heads"), single: sum("single"), double: sum("double"), tuplets: sum("tuplets") };
+  return { per, heads: sum("heads"), graceHeads: sum("graceHeads"), single: sum("single"), double: sum("double"), tuplets: sum("tuplets") };
 }
 
 function staffDiffs(xml, part, per, b) {
@@ -282,14 +285,23 @@ export function compare(xml, info, rows, barLengths) {
     let lengthExplained = false;
     if (bar && sibLen !== undefined && sibLen !== bar.intended && !lengthOff) roundedBars += 1;
     if (staffMatch && bar) for (const part of xml.parts) {
-      const want = part.bars[b - 1] || { heads: 0, single: 0, double: 0 };
+      const want = part.bars[b - 1] || { heads: 0, graceHeads: 0, single: 0, double: 0 };
       const got = partCell(cells, part, b);
       const diffs = staffDiffs(xml, part, got.per, b);
       const short = diffs.reduce((a, x) => a + Math.max(0, -x.d), 0), extra = diffs.reduce((a, x) => a + Math.max(0, x.d), 0);
       moved += Math.min(short, extra);
       const at = (sign) => ({ staff: pickStaff(diffs, sign), bar: b, measure: label, part: part.name });
       const whole = part.staves.length > 1;
-      if (got.heads < want.heads) { const n = want.heads - got.heads; lost += n; problems.push({ ...finding(at(-1), "notes-missing", `${plural(n, "note")} missing ${counts(want.heads, got.heads, whole)}`, "lost on import"), file: want.heads, sib: got.heads }); }
+      if (got.heads < want.heads) {
+        const n = want.heads - got.heads;
+        lost += n;
+        const graceLost = want.graceHeads - got.graceHeads === n;
+        const noun = graceLost ? "grace note" : "note";
+        const displayCounts = graceLost
+          ? counts(want.graceHeads, got.graceHeads, whole)
+          : counts(want.heads, got.heads, whole);
+        problems.push({ ...finding(at(-1), "notes-missing", `${plural(n, noun)} missing ${displayCounts}`, "lost on import"), file: want.heads, sib: got.heads });
+      }
       if (got.heads > want.heads) { const n = got.heads - want.heads; gained += n; problems.push({ ...finding(at(1), "notes-extra", `${plural(n, "extra note")} ${counts(want.heads, got.heads, whole)}`, "added on import"), file: want.heads, sib: got.heads }); }
       if (got.single < want.single) problems.push(finding(at(-1), "tremolo-missing", `${plural(want.single - got.single, "tremolo")} missing`, "lost on import"));
       if (got.double < want.double) problems.push(finding(at(-1), "two-note-tremolo-missing", `${plural(want.double - got.double, "two-note tremolo")} missing`, "lost on import"));

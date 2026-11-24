@@ -315,3 +315,18 @@ test("composite meters sum each denominator and carry forward into later measure
     assert.equal(bar(fixedRoot(out), "P1", 2).expected.toJSON(), 896);
   }
 });
+
+test("equivalent parenthesized meters use the duration they share", () => {
+  const dir = tmp();
+  const source = join(dir, "alternative.musicxml");
+  const note = '<note><pitch><step>C</step><octave>4</octave></pitch><duration>12</duration></note>';
+  writeFileSync(source, `<score-partwise><part-list><score-part id="P1"><part-name>Flute</part-name></score-part></part-list>
+    <part id="P1">
+      <measure number="1"><attributes><divisions>4</divisions><time><beats>6 (3)</beats><beat-type>8 (4)</beat-type></time></attributes>${note}</measure>
+      <measure number="2">${note}</measure>
+    </part></score-partwise>`);
+  const { code, out } = doctor([source, dir]);
+  assert.equal(code, 0);
+  assert.deepEqual(out.changes, {});
+  assert.equal(bar(fixedRoot(out), "P1", 2).expected.toJSON(), 768);
+});
