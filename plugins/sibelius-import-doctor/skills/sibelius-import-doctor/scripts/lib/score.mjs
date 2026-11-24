@@ -103,19 +103,21 @@ function mxlScoreBytes(buf) {
   return { bytes: zip.read(target), inner: target };
 }
 
+export function readScoreText(path) {
+  const buf = readFileSync(path);
+  if (buf.length >= 4 && buf.readUInt32LE(0) === 0x04034b50) {
+    const { bytes, inner } = mxlScoreBytes(buf);
+    return { xml: decode(bytes), kind: "mxl", inner };
+  }
+  return { xml: decode(buf), kind: "musicxml", inner: null };
+}
+
 /** Read a score file. Returns { doc, kind: "musicxml" | "mxl", inner }. */
 export function readScore(path) {
-  const buf = readFileSync(path);
-  let bytes = buf;
-  let kind = "musicxml";
-  let inner = null;
-  if (buf.readUInt32LE(0) === 0x04034b50) {
-    ({ bytes, inner } = mxlScoreBytes(buf));
-    kind = "mxl";
-  }
+  const { xml, kind, inner } = readScoreText(path);
   let doc;
   try {
-    doc = parse(decode(bytes));
+    doc = parse(xml);
   } catch (e) {
     if (e instanceof XmlError) throw new InputError(`not readable as XML: ${e.message}`);
     throw e;

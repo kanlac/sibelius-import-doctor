@@ -22,10 +22,10 @@
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
-import zlib from "node:zlib";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { getSetting } from "./config.mjs";
+import { InputError, readScoreText } from "./lib/score.mjs";
 import { PLUGIN_NAME, PLUGIN_VERSION, compareVersions, pluginStatus, sibeliusRunning } from "./plugin/install.mjs";
 
 const TESTED = { year: 26, month: 11, label: "26.11" };
@@ -120,54 +120,14 @@ const kid = (el, name) => el.children.find((c) => c.name === name);
 const kidText = (el, name) => { const c = kid(el, name); return c ? c.text.trim() : null; };
 function* walk(el) { for (const c of el.children) { yield c; yield* walk(c); } }
 
-// .mxl is a zip: read the central directory, find the root file named in META-INF/container.xml.
-function unzipEntries(buf) {
-  let eocd = -1;
-  for (let k = buf.length - 22; k >= Math.max(0, buf.length - 65557); k--) if (buf.readUInt32LE(k) === 0x06054b50) { eocd = k; break; }
-  if (eocd < 0) throw new Fail("bad-musicxml", "The .mxl file is not a readable zip archive.");
-  const count = buf.readUInt16LE(eocd + 10);
-  let p = buf.readUInt32LE(eocd + 16);
-  const entries = new Map();
-  for (let n = 0; n < count && buf.readUInt32LE(p) === 0x02014b50; n++) {
-    const method = buf.readUInt16LE(p + 10), size = buf.readUInt32LE(p + 20);
-    const nameLen = buf.readUInt16LE(p + 28), extraLen = buf.readUInt16LE(p + 30), commentLen = buf.readUInt16LE(p + 32);
-    const local = buf.readUInt32LE(p + 42);
-    const name = buf.toString("utf8", p + 46, p + 46 + nameLen);
-    entries.set(name, () => {
-      const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
-      const data = buf.subarray(start, start + size);
-      if (method === 0) return data;
-      if (method === 8) return zlib.inflateRawSync(data);
-      throw new Fail("bad-musicxml", "The .mxl file uses a compression method this check cannot read.");
-    });
-    p += 46 + nameLen + extraLen + commentLen;
-  }
-  return entries;
-}
-
-function readMxl(buf) {
-  const entries = unzipEntries(buf);
-  let name = null;
-  if (entries.has("META-INF/container.xml")) {
-    const c = parseXml(decodeText(entries.get("META-INF/container.xml")()));
-    for (const el of walk(c)) if (el.name === "rootfile" && el.attrs["full-path"]) { name = el.attrs["full-path"]; break; }
-  }
-  if (!name) name = [...entries.keys()].find((k) => !k.startsWith("META-INF/") && /\.(xml|musicxml)$/i.test(k));
-  if (!name || !entries.has(name)) throw new Fail("bad-musicxml", "The .mxl file does not contain a MusicXML score.");
-  return decodeText(entries.get(name)());
-}
-
-function decodeText(buf) {
-  if (buf[0] === 0xff && buf[1] === 0xfe) return buf.subarray(2).toString("utf16le");
-  if (buf[0] === 0xfe && buf[1] === 0xff) return Buffer.from(buf.subarray(2)).swap16().toString("utf16le");
-  if (buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) return buf.subarray(3).toString("utf8");
-  return buf.toString("utf8");
-}
-
 export function loadScore(file) {
-  const buf = fs.readFileSync(file);
-  const text = buf[0] === 0x50 && buf[1] === 0x4b ? readMxl(buf) : decodeText(buf);
-  const doc = parseXml(text);
+  let doc;
+  try {
+    doc = parseXml(readScoreText(file).xml);
+  } catch (error) {
+    if (error instanceof InputError) throw new Fail("bad-musicxml", error.message);
+    throw error;
+  }
   const root = doc.children.find((c) => c.name.startsWith("score-"));
   if (!root) throw new Fail("bad-musicxml", `${path.basename(file)} is not a MusicXML score.`);
   if (root.name !== "score-partwise") throw new Fail("unsupported-musicxml", "Only part-by-part (score-partwise) MusicXML can be compared; timewise files are not supported.");

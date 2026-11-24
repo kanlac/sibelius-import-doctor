@@ -354,6 +354,13 @@ test(".mxl archives are read through META-INF/container.xml", () => {
   assert.equal(a.staves.length, 3);
 });
 
+test("the check reads UTF-16 MusicXML without a byte order mark", () => {
+  const xml = SCORE.replace('encoding="UTF-8"', 'encoding="UTF-16LE"');
+  const a = analyseScore(loadScore(tmpFile("s.musicxml", Buffer.from(xml, "utf16le"))));
+  assert.equal(a.staves[0].name, "Flute & Piccolo");
+  assert.equal(a.staves.length, 3);
+});
+
 test("config stores and validates the import-dialog choice", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sid-config-"));
   const run = (...args) => {
