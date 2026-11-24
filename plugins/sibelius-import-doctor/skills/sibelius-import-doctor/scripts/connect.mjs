@@ -33,6 +33,7 @@ const TESTED = { year: 26, month: 11, label: "26.11" };
 const CLIENT_NAME = "Sibelius Import Doctor";
 const MAX_COMMENTS = 300;
 const IMPORT_BOX = "Open MusicXML File";
+const SCHEMA_BOX = "MusicXML format warning";
 
 const emit = (o) => process.stdout.write(JSON.stringify(o) + "\n");
 const say = (s) => process.stderr.write(s + "\n");
@@ -606,9 +607,10 @@ function launchSibelius(appPath) {
 
 // ---------------------------------------------------------------- Connect session
 
-class Session {
-  constructor(port) {
+export class Session {
+  constructor(port, Socket = WebSocket) {
     this.port = port;
+    this.Socket = Socket;
     this.ws = null;
     this.pending = null;
     this.broken = null;
@@ -617,9 +619,17 @@ class Session {
   // One attempt: resolves "ok" | "starting" | "busy" | "denied" | "refused"; never rejects.
   attempt(approvalMs) {
     return new Promise((resolve) => {
-      let settled = false, opened = 0, waitingTimer = null, giveUp = null;
-      const ws = new WebSocket(`ws://127.0.0.1:${this.port}`);
-      const finish = (v) => { if (settled) return; settled = true; clearTimeout(waitingTimer); clearTimeout(giveUp); if (v !== "ok") { try { ws.close(); } catch {} } resolve(v); };
+      let settled = false, accepted = false, opened = 0, waitingTimer = null, giveUp = null;
+      const ws = new this.Socket(`ws://127.0.0.1:${this.port}`);
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        accepted = result === "ok";
+        clearTimeout(waitingTimer);
+        clearTimeout(giveUp);
+        if (!accepted) { try { ws.close(); } catch {} }
+        resolve(result);
+      };
       ws.onopen = () => {
         opened = Date.now();
         ws.send(JSON.stringify({ message: "connect", clientName: CLIENT_NAME, handshakeVersion: "1.0", plugins: [PLUGIN_NAME] }));
@@ -642,7 +652,7 @@ class Session {
         // Only a close whose reason says rejected (kClientRejected_*) is a refusal; any other close
         // before an answer means Sibelius is not ready yet, and the caller retries.
         if (!settled) finish(!opened ? "refused" : /reject/i.test(e.reason || "") ? "denied" : "starting");
-        else this.onClose(e);
+        else if (accepted) this.onClose(e);
       };
       this.ws = ws;
     });
@@ -788,6 +798,11 @@ const LIST_WINDOWS_SCRIPT = `tell application "System Events"
       try
         set nm to (name of w as text)
       end try
+      if sr is "AXDialog" and nm is "" then
+        try
+          if (description of w as text) starts with "Some elements of the MusicXML file you're opening do not meet the MusicXML schema" then set nm to "${SCHEMA_BOX}"
+        end try
+      end if
       set out to out & sr & tab & nm & linefeed
     end repeat
   end tell
@@ -795,7 +810,7 @@ const LIST_WINDOWS_SCRIPT = `tell application "System Events"
 end tell`;
 
 // Windows that are not blocking boxes even when Accessibility calls them dialogs.
-const NOT_A_BOX = new Set(["Quick Start"]);
+const NOT_A_BOX = new Set(["Quick Start", "Importing MusicXML file"]);
 // Boxes that are safe to dismiss with OK in agent-clicks mode. Never click a box not listed here.
 export const HARMLESS_BOXES = new Set(["Missing Fonts"]);
 
@@ -814,6 +829,7 @@ async function openBoxes() {
 const boxesSeen = new Set();
 
 export function openBoxSay(names) {
+  if (names.includes(SCHEMA_BOX)) return "Sibelius found a problem with the MusicXML file. Read its warning and click OK if you want to continue importing.";
   const named = names.filter(Boolean);
   if (named.length) return `Sibelius is showing a box (${named.join(", ")}); please click OK on it, then I will continue.`;
   return "Sibelius is showing a box; please close it (if it asks to allow a connection from an earlier attempt, click No), then I will continue.";
@@ -821,8 +837,8 @@ export function openBoxSay(names) {
 
 // Returns a label for the open boxes when there are any (after reporting them, and in agent-clicks
 // mode dismissing the harmless ones), or null when none can be seen.
-async function handleOpenBoxes(mode) {
-  const boxes = await openBoxes();
+async function handleOpenBoxes(mode, { importing = false, reported = boxesSeen } = {}) {
+  const boxes = (await openBoxes())?.filter((box) => !importing || box !== IMPORT_BOX);
   if (!boxes || !boxes.length) return null;
   const label = boxes.map((b) => b || "unnamed box").join(", ");
   const dismissed = new Set();
@@ -833,8 +849,8 @@ async function handleOpenBoxes(mode) {
     }
   }
   const remaining = boxes.filter((b) => !dismissed.has(b));
-  if (remaining.length && !boxesSeen.has(label)) {
-    boxesSeen.add(label);
+  if (remaining.length && !reported.has(label)) {
+    reported.add(label);
     emit({ event: "sibelius-has-open-box", boxes: remaining, say: openBoxSay(remaining) });
   }
   return label;
@@ -865,14 +881,22 @@ async function pressImportOk(open, isDone, cannotClick) {
 
 const CANNOT_CLICK_SAY = {
   "accessibility-permission": "I can't click in Sibelius for you yet. To let me do it next time, open System Settings > Privacy & Security > Accessibility and switch on the app I run in.",
-  "box-not-found": "I can't find Sibelius' import box to click it.",
+  "box-not-found": "I can't find Sibelius' import options. Check which dialog is open in Sibelius.",
   "not-macos": "Clicking for you only works on macOS.",
 };
+
+async function watchImportBoxes(open, isDone, mode) {
+  const reported = new Set();
+  while (!isDone()) {
+    await Promise.race([open.catch(() => {}), sleep(3000)]);
+    if (!isDone()) await handleOpenBoxes(mode, { importing: true, reported });
+  }
+}
 
 async function importFile(sess, file, mode) {
   const label = path.basename(file);
   say(`Importing ${label} into Sibelius...`);
-  const waiting = { event: "waiting", for: "import-ok", file, say: `Sibelius is showing its MusicXML import options for "${label}". Please click OK.` };
+  const waiting = { event: "waiting", for: "import-ok", file, say: `When Sibelius shows its MusicXML import options for "${label}", please click OK.` };
   // agent-clicks could not click: one unmistakable event with a sentence to pass on, then the usual wait.
   const cannotClick = (reason) => {
     emit({ event: "agent-cannot-click", reason, file, say: `${CANNOT_CLICK_SAY[reason]} ${waiting.say}` });
@@ -881,7 +905,10 @@ async function importFile(sess, file, mode) {
   const open = sess.plugin("OpenFile", [path.resolve(file)], 900000);
   let done = false;
   open.then(() => (done = true), () => (done = true));
-  if (mode === "agent-clicks" && process.platform === "darwin") await pressImportOk(open, () => done, cannotClick);
+  if (mode === "agent-clicks" && process.platform === "darwin") {
+    const isDone = () => done;
+    await Promise.all([pressImportOk(open, isDone, cannotClick), watchImportBoxes(open, isDone, mode)]);
+  }
   else if (mode === "agent-clicks") cannotClick("not-macos");
   else emit(waiting);
   const ok = await open;

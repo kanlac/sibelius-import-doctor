@@ -15,7 +15,7 @@ This is step 3 of SKILL.md. `scripts/connect.mjs` opens the user's original and 
 2. If `olderThanTested` is true: stop here (see above).
 3. If `plugin.current` is false: `node scripts/plugin/install.mjs`. If it reports `restartSibelius: true`, ask the user to quit and reopen Sibelius (or, with their agreement, quit it for them; nothing is lost if no score is open). Say why: Sibelius only loads plug-ins when it starts.
 4. If `importDialog` is null, ask the user once (wording in SKILL.md) and store the answer: `node scripts/config.mjs set importDialog user-clicks` or `... agent-clicks`. Never ask again unless they change their mind.
-5. Tell the user what will happen before you start: Sibelius will ask whether to allow "Sibelius Import Doctor" to connect (they click **Yes**); in user-clicks mode it will also show its import options box twice (once per file) and they click **OK** each time; they should not switch Sibelius windows until it is done.
+5. Tell the user what will happen before you start: Sibelius will ask whether to allow "Sibelius Import Doctor" to connect (they click **Yes**); in user-clicks mode it will usually show its import options box twice (once per file) and they click **OK** each time; they should not switch Sibelius windows until it is done.
 6. Run the check, in the background if your app allows it so you can relay prompts as they come:
 
    ```
@@ -30,7 +30,7 @@ This is step 3 of SKILL.md. `scripts/connect.mjs` opens the user's original and 
    |---|---|
    | `starting-sibelius` | Sibelius was not running and is being started |
    | `waiting`, `for: "approval"` | the connection box is up: ask the user to click Yes |
-   | `sibelius-has-open-box` | Sibelius shows a box of its own (`boxes`: their titles, e.g. "Missing Fonts"; an empty title is an unnamed box). Pass the `say` sentence on; the script keeps trying and continues once the box is gone |
+   | `sibelius-has-open-box` | Sibelius is waiting on a dialog, such as Missing Fonts or a MusicXML format warning. Relay `say` and let the user decide how to answer format warnings |
    | `dismissed-sibelius-box` | agent-clicks only: the script clicked OK on a box it knows is harmless (`box`) |
    | `waiting`, `for: "sibelius-busy"` | Sibelius is busy and no box can be seen (Accessibility not allowed, or not macOS): ask the user to close any open box |
    | `connected` | approved |

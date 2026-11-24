@@ -9,7 +9,7 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const SCRIPTS = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "plugins", "sibelius-import-doctor", "skills", "sibelius-import-doctor", "scripts");
-const { loadScore, analyseScore, compare, compareToOriginal, loadChanges, locate, buildComments, doctorItems, LEVEL_COLOR, parseBoxes, openBoxSay, HARMLESS_BOXES } = await import(path.join(SCRIPTS, "connect.mjs"));
+const { loadScore, analyseScore, compare, compareToOriginal, loadChanges, locate, buildComments, doctorItems, LEVEL_COLOR, parseBoxes, openBoxSay, HARMLESS_BOXES, Session } = await import(path.join(SCRIPTS, "connect.mjs"));
 
 const SCORE = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
@@ -322,7 +322,10 @@ test("the same finding in one bar in several parts becomes one comment on the to
 test("Sibelius' own boxes are recognised from the window list; only known harmless ones may be clicked", () => {
   const listing = "AXFloatingWindow\tKeypad\nAXStandardWindow\tSong - Sibelius\nAXDialog\tMissing Fonts\nAXDialog\tQuick Start\nAXDialog\t\n";
   assert.deepEqual(parseBoxes(listing), ["Missing Fonts", ""]);
-  assert.deepEqual(parseBoxes("AXStandardWindow\tSong\n"), []);
+  assert.deepEqual(parseBoxes("AXStandardWindow\tSong\nAXDialog\tImporting MusicXML file\n"), []);
+  assert.deepEqual(parseBoxes("AXDialog\tMusicXML format warning\n"), ["MusicXML format warning"]);
+  assert.match(openBoxSay(["MusicXML format warning"]), /Read its warning and click OK if you want to continue/);
+  assert.ok(!HARMLESS_BOXES.has("MusicXML format warning"));
   assert.ok(HARMLESS_BOXES.has("Missing Fonts"));
   assert.equal(HARMLESS_BOXES.has(""), false);
   assert.equal(openBoxSay(["Missing Fonts"]), "Sibelius is showing a box (Missing Fonts); please click OK on it, then I will continue.");
@@ -401,4 +404,31 @@ test("notes shortened by the doctor remain amber even when Sibelius keeps their 
   assert.equal(comments[0].staff, 3);
   assert.equal(comments[0].level, 2);
   assert.match(comments[0].text, /note shortened.*compare with the original/);
+});
+
+test("closing a busy attempt does not break a subsequently approved connection", async () => {
+  let attempts = 0;
+  class Socket {
+    constructor() {
+      queueMicrotask(() => this.onopen());
+    }
+
+    send(raw) {
+      const request = JSON.parse(raw);
+      const response = request.message === "connect"
+        ? (++attempts === 1 ? { message: "busyError" } : { message: "connectResponse", result: true })
+        : { message: "invokePluginResponse", result: true, returnValue: "ready" };
+      queueMicrotask(() => this.onmessage({ data: JSON.stringify(response) }));
+    }
+
+    close() {
+      queueMicrotask(() => this.onclose({ code: 1000 }));
+    }
+  }
+
+  const session = new Session(1898, Socket);
+  assert.equal(await session.attempt(1000), "busy");
+  assert.equal(await session.attempt(1000), "ok");
+  assert.equal(await session.plugin("Ping"), "ready");
+  session.close();
 });
