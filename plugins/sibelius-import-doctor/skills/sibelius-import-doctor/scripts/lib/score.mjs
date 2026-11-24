@@ -9,6 +9,7 @@ import { XmlError, parse, kids, find, findText, attr, iter, text } from "./xml.m
 export const TICKS_PER_QUARTER = 256;
 
 export class InputError extends Error {}
+export class TimewiseError extends InputError {}
 
 /** Python int(): optional sign and digits, surrounding whitespace allowed. */
 export function toInt(s, what) {
@@ -103,7 +104,7 @@ function mxlScoreBytes(buf) {
   return { bytes: zip.read(target), inner: target };
 }
 
-export function readScoreText(path) {
+function readScoreText(path) {
   const buf = readFileSync(path);
   if (buf.length >= 4 && buf.readUInt32LE(0) === 0x04034b50) {
     const { bytes, inner } = mxlScoreBytes(buf);
@@ -123,7 +124,7 @@ export function readScore(path) {
     throw e;
   }
   if (doc.root.name === "score-timewise") {
-    throw new InputError("this is a score-timewise MusicXML file; only score-partwise (what every notation program exports) is supported");
+    throw new TimewiseError("this is a score-timewise MusicXML file; only score-partwise (what every notation program exports) is supported");
   }
   if (doc.root.name !== "score-partwise") throw new InputError(`not a MusicXML score (root element is <${doc.root.name}>)`);
   return { doc, kind, inner };
@@ -140,6 +141,22 @@ export function partNames(root) {
 }
 
 const ticks = (dur, divisions, what) => new Frac(toInt(dur, what) * TICKS_PER_QUARTER, divisions);
+
+/** Duration of a metered bar, including signatures such as 2/4 + 3/8 or 3+2/8. */
+export function meterTicks(time) {
+  const numerators = kids(time, "beats");
+  const denominators = kids(time, "beat-type");
+  if (!numerators.length || numerators.length !== denominators.length) return null;
+  let length = new Frac(0);
+  for (const [i, numerator] of numerators.entries()) {
+    const groups = (text(numerator) ?? "").split("+").map((n) => n.trim());
+    const unit = (text(denominators[i]) ?? "").trim();
+    if (!groups.every((n) => /^\d+$/.test(n) && Number(n) > 0) || !/^\d+$/.test(unit) || Number(unit) === 0) return null;
+    const beats = groups.reduce((sum, n) => sum + Number(n), 0);
+    length = length.add(new Frac(beats * 4 * TICKS_PER_QUARTER, Number(unit)));
+  }
+  return length;
+}
 
 /** First <staves> of a part, like lxml part.find(".//attributes/staves"). */
 export function partStaves(part) {
@@ -160,8 +177,7 @@ export function analyse(root) {
   for (const part of kids(root, "part")) {
     const pid = attr(part, "id");
     let divisions = 1;
-    let beats = 4;
-    let beatType = 4;
+    let expected = new Frac(4 * TICKS_PER_QUARTER);
     const measures = [];
     kids(part, "measure").forEach((m, k) => {
       const where = `part ${pid}, measure ${attr(m, "number") ?? k + 1}`;
@@ -177,12 +193,7 @@ export function analyse(root) {
           const d = findText(el, "divisions");
           if (d) divisions = toInt(d, `divisions in ${where}`);
           const t = find(el, "time");
-          if (t && findText(t, "beats")) {
-            const parts = findText(t, "beats").split("+");
-            if (parts.every((x) => /^\s*[+-]?\d+\s*$/.test(x))) beats = parts.reduce((s, x) => s + Number(x.trim()), 0);
-            const bt = findText(t, "beat-type");
-            if (bt && /^\s*\d+\s*$/.test(bt)) beatType = Number(bt.trim());
-          }
+          if (t) expected = meterTicks(t) ?? expected;
         } else if (el.name === "backup") {
           pos = pos.sub(ticks(findText(el, "duration"), divisions, `backup duration in ${where}`));
         } else if (el.name === "forward") {
@@ -221,7 +232,7 @@ export function analyse(root) {
         index: k + 1,
         number: attr(m, "number"),
         implicit: attr(m, "implicit") === "yes",
-        expected: new Frac(beats * 4 * TICKS_PER_QUARTER, beatType),
+        expected,
         fill,
         heads,
         onsets,

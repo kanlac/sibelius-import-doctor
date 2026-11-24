@@ -15,12 +15,12 @@ Everything below runs with Node.js 22 or newer (this skill's `scripts/`). If Nod
 
 - **MusicXML (`.musicxml`, `.xml`, `.mxl`)**: continue.
 - **Only a PDF**: this skill does not read PDFs. Use the `sheetmusic-pdf-convert` skill (https://github.com/kanlac/sheetmusic-pdf-convert); if it is not installed, install it from there, then come back with the MusicXML it produces.
-- Ask what looked wrong in Sibelius, if the user has not said (a missing note, a strange tremolo, a bar that looks too long). After the check, answer that specific thing, even when the answer is that nothing is wrong.
+- Ask what looked wrong if the user has not said. Address it after the check.
 - **A `.sib` file that already looks wrong**: the damage happened at import time; ask for the original MusicXML.
 
 ## 2. Find the problems (no Sibelius needed)
 
-Run `node scripts/doctor.mjs <file> <output folder>` (it never changes the file; `--dry-run` only reports). It reports, in terms of parts and bar numbers, what Sibelius is known to mishandle. `references/problems.md` lists each kind, how it shows up in Sibelius, how it is fixed, and what we measured. Say plainly what was found and what will be changed, then fix. Where a fix involves a choice (for example trimming versus padding an overlong bar), pick the safer default, say which, and offer the other. The doctor never invents short part names: for parts it reports without one, choose conventional short names in the score's own language and pass them in (`--short-name`); the user can change them in Sibelius.
+Run `node scripts/doctor.mjs <file> <output folder>` (it never changes the file; `--dry-run` only reports). It reports, in terms of parts and bar numbers, what Sibelius is known to mishandle. `references/problems.md` lists each kind, how it shows up in Sibelius, how it is fixed, and what we measured. Say plainly what was found and what will be changed, then fix. Where a fix involves a choice (for example trimming versus padding an overlong bar), pick the safer default, say which, and offer the other. If later systems need labels, supply conventional short names in the score's language (`--short-name`).
 
 Outputs, always as copies: the fixed MusicXML and a short report of what changed and what did not. Never claim the file is perfect; report only what can be checked.
 
@@ -38,7 +38,7 @@ Do this whenever Sibelius 26.11 or newer is installed; the user should not have 
 
 ## 4. Hand back
 
-The first sentence is the before-and-after, from the check's numbers: what Sibelius loses when it imports the original, and what is left after the fix. For example: "Opening your file directly in Sibelius loses 10 notes; the fixed copy keeps all of them, and 2 bars still need your eyes: violin bar 36, harp bar 38." If nothing was wrong, say that and what was compared. Then, shortly: where the files are (full paths, one output folder named after the score), what the comments in the saved `.sib` mean (red: serious; amber: please check; grey-green: changed, nothing to do), and answer the question the user asked in step 1. Say once, in plain words, what you could not check, such as pitches and rhythms bar by bar. Use plain words throughout: no command-line options, no internal names, no "trim", "OMR" or "time modification". A missing composer is a small note, not a problem. Open the fixed file in Sibelius if they want.
+Lead with the before-and-after and the bars that still need review. Say what was measured: note counts by part and bar, bar lengths, tuplets and tremolos. Use the source score or PDF, if available, to spot-check what matters to the players in the Sibelius copy: entrances and rhythm, written and sounding pitch, markings and readable score and parts. Name any visible discrepancies and what remains unchecked. Give full paths and explain the comments in plain words (red: serious, amber: check, grey-green: changed).
 
 ## Don't
 

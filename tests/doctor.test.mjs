@@ -296,3 +296,22 @@ test("every finding and every change is graded harmless, glance or unfixed", () 
   assert.deepEqual(trem.grades, { "two-note-tremolo": "harmless", "unmeasured-tremolo": "harmless", "missing-abbreviation": "harmless", "missing-composer": "unfixed" });
   for (const f of [...pad.found, ...trim.found, ...trem.found]) assert.ok(["problem", "note"].includes(f.category));
 });
+
+test("composite meters sum each denominator and carry forward into later measures", () => {
+  const dir = tmp();
+  const source = join(dir, "mixed.musicxml");
+  const note = '<note><pitch><step>C</step><octave>4</octave></pitch><duration>14</duration></note>';
+  writeFileSync(source, `<score-partwise><part-list><score-part id="P1"><part-name>Flute</part-name></score-part></part-list>
+    <part id="P1">
+      <measure number="1"><attributes><divisions>4</divisions><time><beats>2</beats><beat-type>4</beat-type><beats>3</beats><beat-type>8</beat-type></time></attributes>${note}</measure>
+      <measure number="2">${note}</measure>
+    </part></score-partwise>`);
+  for (const mode of ["pad", "trim"]) {
+    const { code, out } = doctor([source, dir, "--mode", mode]);
+    assert.equal(code, 0);
+    assert.deepEqual(out.found.map((f) => f.kind), ["missing-abbreviation", "missing-composer"]);
+    assert.deepEqual(out.changes, {});
+    assert.equal(out.notes_removed, 0);
+    assert.equal(bar(fixedRoot(out), "P1", 2).expected.toJSON(), 896);
+  }
+});

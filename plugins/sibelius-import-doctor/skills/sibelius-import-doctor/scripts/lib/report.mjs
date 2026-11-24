@@ -36,7 +36,7 @@ function says(p, mode) {
   switch (p.kind) {
     case "overlong-bar":
       return {
-        what: "These bars hold more beats than the time signature allows, so Sibelius would drop the notes at the end of them. Usually one note value in the bar is wrong.",
+        what: "These bars hold more beats than the time signature allows, so Sibelius may drop notes at the end. Usually one note value in the bar is wrong.",
         done: mode === "pad"
           ? "Every note was kept: rests were added to the other instruments so that all of them last as long as the longest one. These bars are now longer than the time signature."
           : "The music past the bar line was cut off: notes that started after it were removed and notes that crossed it were shortened to end at it.",
@@ -51,7 +51,7 @@ function says(p, mode) {
     case "two-note-tremolo":
       return {
         what: "Sibelius would show these two-note tremolos as double whole notes with a 2 under them.",
-        done: p.fixed ? "They were rewritten so Sibelius shows the note values you see in your score. They sound the same." : off,
+        done: p.fixed ? "They were rewritten so Sibelius shows the note values you see in your score. Their written playback durations were kept." : off,
       };
     case "two-note-tremolo-unusual":
       return { what: "These two-note tremolos are written in an unusual way that has not been tried in Sibelius.", done: "Left as they are. Check how they look in Sibelius." };
@@ -76,7 +76,7 @@ function says(p, mode) {
 }
 
 const WHAT = {
-  "overlong-bar": "These bars hold more beats than the time signature allows, so Sibelius would drop the notes at the end of them.",
+  "overlong-bar": "These bars hold more beats than the time signature allows, so Sibelius may drop notes at the end.",
   "overlong-rest": "In these bars an instrument has only rests, but the rests are marked as longer than the bar.",
   "two-note-tremolo": "Sibelius would show these two-note tremolos as double whole notes with a 2 under them.",
   "two-note-tremolo-unusual": "These two-note tremolos are written in an unusual way that has not been tried in Sibelius.",

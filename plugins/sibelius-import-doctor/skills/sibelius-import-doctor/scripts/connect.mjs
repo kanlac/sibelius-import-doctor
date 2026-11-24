@@ -25,12 +25,12 @@ import path from "node:path";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { getSetting } from "./config.mjs";
-import { InputError, readScoreText } from "./lib/score.mjs";
+import { InputError, meterTicks, readScore as readMusicXml, TimewiseError, TICKS_PER_QUARTER as TICKS } from "./lib/score.mjs";
+import { attr, find as kid, findText, iter, kids } from "./lib/xml.mjs";
 import { PLUGIN_NAME, PLUGIN_VERSION, compareVersions, pluginStatus, sibeliusRunning } from "./plugin/install.mjs";
 
 const TESTED = { year: 26, month: 11, label: "26.11" };
 const CLIENT_NAME = "Sibelius Import Doctor";
-const TICKS = 256; // Sibelius ticks per quarter note
 const MAX_COMMENTS = 300;
 const IMPORT_BOX = "Open MusicXML File";
 
@@ -49,96 +49,23 @@ class Fail extends Error {
 
 // ---------------------------------------------------------------- MusicXML reading
 
-function decodeEntities(s) {
-  if (!s.includes("&")) return s;
-  return s.replace(/&(#x[0-9a-fA-F]+|#\d+|amp|lt|gt|quot|apos);/g, (_, e) => {
-    if (e[0] === "#") return String.fromCodePoint(e[1] === "x" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10));
-    return { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" }[e];
-  });
-}
-
-function skipTo(s, needle, from) {
-  const k = s.indexOf(needle, from);
-  if (k < 0) throw new Fail("bad-musicxml", "The MusicXML file is cut off or not valid XML.");
-  return k + needle.length;
-}
-
-function tagEnd(s, from) {
-  let q = null;
-  for (let j = from; j < s.length; j++) {
-    const c = s[j];
-    if (q) { if (c === q) q = null; } else if (c === '"' || c === "'") q = c; else if (c === ">") return j;
-  }
-  throw new Fail("bad-musicxml", "The MusicXML file is cut off or not valid XML.");
-}
-
-function skipDoctype(s, from) {
-  let depth = 0;
-  for (let j = from; j < s.length; j++) {
-    const c = s[j];
-    if (c === "[") depth++;
-    else if (c === "]") depth--;
-    else if (c === ">" && depth <= 0) return j + 1;
-  }
-  throw new Fail("bad-musicxml", "The MusicXML file is cut off or not valid XML.");
-}
-
-// Small non-validating XML parser: elements, attributes and text, enough for MusicXML.
-export function parseXml(s) {
-  const doc = { name: "#document", attrs: {}, children: [], text: "" };
-  const stack = [doc];
-  let i = 0;
-  while (i < s.length) {
-    const lt = s.indexOf("<", i);
-    if (lt < 0) break;
-    const top = stack[stack.length - 1];
-    if (lt > i && stack.length > 1) top.text += decodeEntities(s.slice(i, lt));
-    if (s.startsWith("<!--", lt)) { i = skipTo(s, "-->", lt); continue; }
-    if (s.startsWith("<![CDATA[", lt)) { const e = skipTo(s, "]]>", lt); top.text += s.slice(lt + 9, e - 3); i = e; continue; }
-    if (s.startsWith("<?", lt)) { i = skipTo(s, "?>", lt); continue; }
-    if (s.startsWith("<!", lt)) { i = skipDoctype(s, lt + 2); continue; }
-    const j = tagEnd(s, lt + 1);
-    let body = s.slice(lt + 1, j);
-    i = j + 1;
-    if (body[0] === "/") { if (stack.length > 1) stack.pop(); continue; }
-    const selfClose = body.endsWith("/");
-    if (selfClose) body = body.slice(0, -1);
-    const name = /^[^\s/>]+/.exec(body)[0];
-    const el = { name, attrs: {}, children: [], text: "" };
-    const re = /([^\s=]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
-    const rest = body.slice(name.length);
-    let a;
-    while ((a = re.exec(rest))) el.attrs[a[1]] = decodeEntities(a[2] ?? a[3]);
-    top.children.push(el);
-    if (!selfClose) stack.push(el);
-  }
-  return doc;
-}
-
-const kids = (el, name) => el.children.filter((c) => c.name === name);
-const kid = (el, name) => el.children.find((c) => c.name === name);
-const kidText = (el, name) => { const c = kid(el, name); return c ? c.text.trim() : null; };
-function* walk(el) { for (const c of el.children) { yield c; yield* walk(c); } }
+const kidText = (el, name) => findText(el, name)?.trim() ?? null;
 
 export function loadScore(file) {
-  let doc;
   try {
-    doc = parseXml(readScoreText(file).xml);
+    return readMusicXml(file).doc.root;
   } catch (error) {
+    if (error instanceof TimewiseError) throw new Fail("unsupported-musicxml", error.message);
     if (error instanceof InputError) throw new Fail("bad-musicxml", error.message);
     throw error;
   }
-  const root = doc.children.find((c) => c.name.startsWith("score-"));
-  if (!root) throw new Fail("bad-musicxml", `${path.basename(file)} is not a MusicXML score.`);
-  if (root.name !== "score-partwise") throw new Fail("unsupported-musicxml", "Only part-by-part (score-partwise) MusicXML can be compared; timewise files are not supported.");
-  return root;
 }
 
 // ---------------------------------------------------------------- MusicXML analysis
 
 function tremoloKinds(note) {
   const out = [];
-  for (const el of walk(note)) if (el.name === "tremolo") out.push(el.attrs.type || "single");
+  for (const el of iter(note, "tremolo")) out.push(attr(el, "type") || "single");
   return out;
 }
 
@@ -146,17 +73,15 @@ function measureFacts(m, st) {
   // partTrem: tremolos of the whole part, one per voice and onset, so a chord spread over two staves
   // (cross-staff notation) counts once, as Sibelius shows it.
   // tuplets: onsets of notes the file puts in a tuplet (<time-modification>), one per voice and onset.
-  const f = { number: m.attrs.number ?? "", implicit: m.attrs.implicit === "yes", heads: {}, partTrem: { single: new Set(), double: new Set() }, tuplets: new Set(), fill: 0 };
+  const f = { number: attr(m, "number") ?? "", implicit: attr(m, "implicit") === "yes", heads: {}, partTrem: { single: new Set(), double: new Set() }, tuplets: new Set(), fill: 0 };
   let pos = 0, lastStart = 0, lastVoice = "1";
-  for (const el of m.children) {
+  for (const el of kids(m)) {
     if (el.name === "attributes") {
       const d = kidText(el, "divisions"); if (d) st.divisions = Number(d);
       const n = kidText(el, "staves"); if (n) st.staves = Math.max(st.staves, Number(n));
       const t = kid(el, "time");
-      if (t && kidText(t, "beats")) {
-        const beats = kidText(t, "beats").split("+").reduce((a, b) => a + Number(b), 0);
-        if (Number.isFinite(beats)) { st.beats = beats; st.beatType = Number(kidText(t, "beat-type")) || 4; }
-      }
+      const meter = t && meterTicks(t);
+      if (meter) st.expected = meter.n / meter.d;
     } else if (el.name === "backup" || el.name === "forward") {
       const d = (Number(kidText(el, "duration")) || 0) * TICKS / st.divisions;
       pos += el.name === "backup" ? -d : d;
@@ -178,7 +103,7 @@ function measureFacts(m, st) {
       }
     }
   }
-  f.expected = Math.round(st.beats * 4 * TICKS / st.beatType);
+  f.expected = Math.round(st.expected);
   return f;
 }
 
@@ -187,8 +112,8 @@ export function analyseScore(root) {
   const order = [];
   const names = {};
   const partList = kid(root, "part-list");
-  for (const sp of partList ? kids(partList, "score-part") : []) { order.push(sp.attrs.id); names[sp.attrs.id] = kidText(sp, "part-name") || ""; }
-  const parts = new Map(kids(root, "part").map((p) => [p.attrs.id, p]));
+  for (const sp of partList ? kids(partList, "score-part") : []) { order.push(attr(sp, "id")); names[attr(sp, "id")] = kidText(sp, "part-name") || ""; }
+  const parts = new Map(kids(root, "part").map((p) => [attr(p, "id"), p]));
   for (const id of parts.keys()) if (!order.includes(id)) order.push(id);
   const staves = [];
   const partsOut = [];
@@ -196,7 +121,7 @@ export function analyseScore(root) {
   for (const id of order) {
     const part = parts.get(id);
     if (!part) continue;
-    const st = { divisions: 1, beats: 4, beatType: 4, staves: 1 };
+    const st = { divisions: 1, expected: 4 * TICKS, staves: 1 };
     const facts = kids(part, "measure").map((m) => measureFacts(m, st));
     if (!bars) bars = facts.map((f) => ({ number: f.number, expected: f.expected, implicit: f.implicit, fill: 0 }));
     facts.forEach((f, i) => { if (bars[i]) bars[i].fill = Math.max(bars[i].fill, f.fill); });
@@ -217,9 +142,21 @@ export function analyseScore(root) {
       })),
     });
   }
-  // What the file asks for: a pickup lasts as long as its music; any other bar at least its time
-  // signature, longer when the music in it is longer (Sibelius pads short bars with rests).
-  for (const b of bars || []) b.intended = b.implicit ? Math.round(b.fill) : Math.max(b.expected, Math.round(b.fill));
+  // Some exporters omit the pickup flag. A shared short opening, or a closing bar that
+  // completes that opening in the same meter, can have its own length.
+  const first = bars?.[0];
+  const lastIndex = (bars?.length ?? 0) - 1;
+  const agreedShort = (b, i) => {
+    const fill = Math.round(b.fill);
+    return fill > 0 && fill < b.expected && partsOut.every((p) => p.bars[i]?.fill === fill);
+  };
+  const pickup = first && (first.implicit || (lastIndex > 0 && agreedShort(first, 0)));
+  for (const [i, b] of (bars || []).entries()) {
+    const fill = Math.round(b.fill);
+    const closesPickup = pickup && i > 0 && i === lastIndex && b.expected === first.expected &&
+      fill + Math.round(first.fill) === b.expected && agreedShort(b, i);
+    b.intended = b.implicit || (i === 0 && pickup) || closesPickup ? fill : Math.max(b.expected, fill);
+  }
   return { staves, parts: partsOut, bars: bars || [] };
 }
 
@@ -415,8 +352,8 @@ const HARMLESS_FIXES = new Set(["measure-rest", "pad", "pad-empty-measure"]);
 const HARMLESS_UNFIXED = new Set(["overlong-rest"]);
 // Short form and one-time explanation of each doctor change and each problem it could not fix.
 const FIX_TEXT = {
-  "trim-delete": ["note past the bar line removed", "Sibelius would have dropped it"],
-  "trim-shorten": ["note shortened to end at the bar line", "it crossed the bar line"],
+  "trim-delete": ["note past the bar line removed", "compare with the original", 2],
+  "trim-shorten": ["note shortened to end at the bar line", "compare with the original", 2],
   "tremolo-pair": ["two-note tremolo rewritten", "so Sibelius draws it correctly"],
   unmeasured: ["unmeasured tremolo rewritten as three strokes", "Sibelius would have dropped it"],
 };
@@ -433,9 +370,9 @@ function fromDoctorReport(raw) {
   for (const c of raw.log) {
     if (HARMLESS_FIXES.has(c.fix)) { harmless += 1; continue; }
     if (!FIX_TEXT[c.fix] || !c.measure) continue;
-    let [short, explain] = FIX_TEXT[c.fix];
-    if (c.fix === "trim-delete" && c.deleted_noteheads > 1) { short = `${c.deleted_noteheads} notes past the bar line removed`; explain = "Sibelius would have dropped them"; }
-    changed.push({ part: c.part, measureIndex: c.measure, staff: Number(c.staff) || 1, kind: c.fix, short, explain, text: `${short}: ${explain}` });
+    let [short, explain, level] = FIX_TEXT[c.fix];
+    if (c.fix === "trim-delete" && c.deleted_noteheads > 1) short = `${c.deleted_noteheads} notes past the bar line removed`;
+    changed.push({ part: c.part, measureIndex: c.measure, staff: Number(c.staff) || 1, kind: c.fix, short, explain, level, text: `${short}: ${explain}` });
   }
   const unfixed = [];
   for (const p of raw.found || []) {
@@ -518,7 +455,7 @@ const LEVEL = {
   "bar-length": 2,
 };
 export function levelOf(it) {
-  if (it.source === "changed") return 1;
+  if (it.source === "changed") return it.level || 1;
   if (it.source === "unfixed" || it.source === "attention") return it.level || 2;
   return LEVEL[it.kind] || 2;
 }

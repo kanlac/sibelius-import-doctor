@@ -9,7 +9,7 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const SCRIPTS = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "plugins", "sibelius-import-doctor", "skills", "sibelius-import-doctor", "scripts");
-const { parseXml, loadScore, analyseScore, compare, compareToOriginal, loadChanges, locate, buildComments, doctorItems, LEVEL_COLOR, parseBoxes, openBoxSay, HARMLESS_BOXES } = await import(path.join(SCRIPTS, "connect.mjs"));
+const { loadScore, analyseScore, compare, compareToOriginal, loadChanges, locate, buildComments, doctorItems, LEVEL_COLOR, parseBoxes, openBoxSay, HARMLESS_BOXES } = await import(path.join(SCRIPTS, "connect.mjs"));
 
 const SCORE = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
@@ -67,12 +67,9 @@ const PERFECT = [
 const INFO = { ok: true, staffCount: 3 };
 const LENGTHS = [256, 768];
 
-test("parser handles doctype, comments and entities", () => {
-  const doc = parseXml(SCORE);
-  const root = doc.children.find((c) => c.name === "score-partwise");
-  assert.ok(root);
-  const name = root.children[0].children[0].children[0];
-  assert.equal(name.text, "Flute & Piccolo");
+test("the live check uses the same XML validation as the doctor", () => {
+  assert.equal(analyseScore(loadScore(tmpFile("valid.musicxml", SCORE))).staves[0].name, "Flute & Piccolo");
+  assert.throws(() => loadScore(tmpFile("invalid.musicxml", SCORE.replace("</part-list>", "</invalid>"))), /unexpected <\/invalid>/);
 });
 
 test("analysis expands staves and counts chords, grace notes and tremolos", () => {
@@ -240,7 +237,8 @@ test("the doctor's report.json: harmless rest changes get no comment, note and t
   assert.equal(ch.unfixed.length, 1);
   const comments = buildComments(doctorItems(ch, a));
   assert.equal(comments.length, 2);
-  assert.equal(comments[0].text, "two-note tremolo rewritten: so Sibelius draws it correctly; 2 notes past the bar line removed: Sibelius would have dropped them");
+  assert.equal(comments[0].level, 2);
+  assert.equal(comments[0].text, "2 notes past the bar line removed: compare with the original; two-note tremolo rewritten: so Sibelius draws it correctly");
   assert.equal(comments[1].staff, 2);
   assert.equal(comments[1].level, 2);
   assert.match(comments[1].text, /^unmeasured tremolo left as is: Sibelius may drop it$/);
@@ -376,4 +374,31 @@ test("config stores and validates the import-dialog choice", () => {
   assert.ok(run("set", "importDialog", "maybe").error);
   assert.ok(run("get", "nope").error);
   assert.equal(run("get", "importDialog").value, "agent-clicks");
+});
+
+test("agreed short opening and complementary closing bars keep their length", () => {
+  const lastBar = (duration) => `<measure number="3"><note><rest measure="yes"/><duration>${duration}</duration></note></measure></part>`;
+  const closingLengths = [4, 2];
+  const xml = SCORE.replaceAll('number="0" implicit="yes"', 'number="1"')
+    .replaceAll('<measure number="1">\n', '<measure number="2">\n')
+    .replaceAll('</part>', () => lastBar(closingLengths.shift()));
+  const a = analyseScore(loadScore(tmpFile("pickup.musicxml", xml)));
+  assert.deepEqual(a.bars.map((b) => b.intended), [256, 768, 512]);
+  assert.deepEqual(compare(a, INFO, PERFECT, [256, 768, 512]).problems, []);
+  const longerOpening = compare(a, INFO, PERFECT, [512, 768, 512]);
+  assert.ok(longerOpening.problems.length);
+  assert.ok(longerOpening.problems.every((p) => p.bar === 1 && p.kind === "bar-length"));
+});
+
+test("notes shortened by the doctor remain amber even when Sibelius keeps their count", () => {
+  const a = analyseScore(loadScore(tmpFile("s.musicxml", SCORE)));
+  const f = tmpFile("trim.json", JSON.stringify({
+    log: [{ part: "P2", measure: 2, staff: 2, fix: "trim-shorten" }],
+    needs_attention: [{ kind: "notes-shortened", where: [{ part: "P2", bars: ["1"] }] }],
+  }));
+  const comments = buildComments(doctorItems(loadChanges(f), a));
+  assert.equal(comments.length, 1);
+  assert.equal(comments[0].staff, 3);
+  assert.equal(comments[0].level, 2);
+  assert.match(comments[0].text, /note shortened.*compare with the original/);
 });
