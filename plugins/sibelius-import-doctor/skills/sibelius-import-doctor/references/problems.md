@@ -57,7 +57,7 @@ Sibelius 26.11 (build 26.11.0.13211) on macOS. Each file was imported through Si
 - **Score A**: 26 parts, 27 staves, 38 bars, 1491 noteheads, with many overlong bars.
 - **Score B**: 28 parts, 29 staves, 124 bars, 5128 noteheads, with tremolos, no short part names and no composer.
 
-The Node scripts here are a port of the Python prototype used in those measurements. On Score A and Score B, and on a third PDF-converted score, the port writes byte-for-byte the same fixed file as the prototype when run as the prototype was (`--fill-short-bars`, both modes). The default leaves short bars alone. A separate live check on Sibelius 26.11 confirmed that the default pad output kept all 1491 notes in Score A with either import layout.
+The Node scripts here are a port of the Python prototype used in those measurements. On Score A and Score B, and on a third PDF-converted score, the port writes byte-for-byte the same fixed file as the prototype when run as the prototype was (`--fill-short-bars`, both modes). The default leaves short bars alone. A separate live check on Sibelius 26.11 confirmed that the default pad output kept all 1491 notes in Score A.
 
 ---
 

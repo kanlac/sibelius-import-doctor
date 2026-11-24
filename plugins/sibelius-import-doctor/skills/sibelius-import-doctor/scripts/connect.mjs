@@ -6,7 +6,7 @@
 //       the stored import-dialog choice. Never opens a Connect connection, so no approval box appears.
 //
 //   node connect.mjs check --fixed FIXED.musicxml [--original ORIGINAL.musicxml] [--changes CHANGES.json]
-//                          [--out DIR] [--import-dialog user-clicks|agent-clicks] [--import-layout file|house-style] [--port N] [--close]
+//                          [--out DIR] [--import-dialog user-clicks|agent-clicks] [--port N] [--close]
 //       Connects (Sibelius asks the user to allow it), imports the original (if given) and the fixed
 //       file, reads every note back through the SibeliusImportDoctor plug-in and compares each bar
 //       with the MusicXML. Then it leaves one comment in the fixed score on every bar the doctor
@@ -33,7 +33,6 @@ const CLIENT_NAME = "Sibelius Import Doctor";
 const TICKS = 256; // Sibelius ticks per quarter note
 const MAX_COMMENTS = 300;
 const IMPORT_BOX = "Open MusicXML File";
-const LAYOUT_BOXES = ["Use page and staff size from MusicXML file", "Use layout and formatting from MusicXML file"];
 
 const emit = (o) => process.stdout.write(JSON.stringify(o) + "\n");
 const say = (s) => process.stderr.write(s + "\n");
@@ -837,29 +836,6 @@ const CLICK_OK_SCRIPT = `on run argv
           set t to (name of w as text)
         end try
         if t is dialogTitle then
-          if (count of argv) > 1 then
-            set wanted to item 2 of argv as integer
-            set controls to entire contents of w
-            repeat with labelIndex from 3 to count of argv
-              set controlName to item labelIndex of argv
-              set matched to false
-              repeat with elem in controls
-                if role of elem is in {"AXCheckBox", "AXButton"} and my matchesLabel(name of elem, controlName) then
-                  try
-                    set currentValue to value of attribute "AXValue" of elem as integer
-                    if currentValue is not in {0, 1} then return "layout-unavailable"
-                    if currentValue is not wanted then click elem
-                    if (value of attribute "AXValue" of elem as integer) is not wanted then return "layout-unavailable"
-                  on error
-                    return "layout-unavailable"
-                  end try
-                  set matched to true
-                  exit repeat
-                end if
-              end repeat
-              if not matched then return "layout-unavailable"
-            end repeat
-          end if
           try
             click button "OK" of w
             return "clicked"
@@ -884,19 +860,7 @@ const CLICK_OK_SCRIPT = `on run argv
       return "no-window"
     end tell
   end tell
-end run
-
--- Sibelius exposes keyboard mnemonics as ampersands in Accessibility names.
-on matchesLabel(label, expectedLabel)
-  if label is missing value then return false
-  set savedDelimiters to AppleScript's text item delimiters
-  set AppleScript's text item delimiters to "&"
-  set labelParts to text items of label
-  set AppleScript's text item delimiters to ""
-  set plainLabel to labelParts as text
-  set AppleScript's text item delimiters to savedDelimiters
-  return plainLabel is expectedLabel
-end matchesLabel`;
+end run`;
 
 // Shift (key code 56) wakes a screen saver, which otherwise hides Sibelius' windows from Accessibility.
 const WAKE_SCRIPT = 'tell application "System Events" to key code 56';
@@ -911,7 +875,7 @@ function osa(args) {
   });
 }
 
-const clickImportOk = (layout) => osa(["-e", CLICK_OK_SCRIPT, IMPORT_BOX, layout === "house-style" ? "0" : "1", ...LAYOUT_BOXES]);
+const clickImportOk = () => osa(["-e", CLICK_OK_SCRIPT, IMPORT_BOX]);
 
 // Sibelius' own dialog windows, as "subrole<TAB>name" lines.
 const LIST_WINDOWS_SCRIPT = `tell application "System Events"
@@ -982,21 +946,17 @@ const wakeScreen = () => osa(["-e", WAKE_SCRIPT]);
 
 // agent-clicks: keep looking for the box until the import returns. After 30 s without success the user
 // is asked too, and whoever is first wins.
-async function pressImportOk(open, isDone, cannotClick, layout) {
+async function pressImportOk(open, isDone, cannotClick) {
   const t0 = Date.now();
   let misses = 0, askedUser = false;
   while (!isDone()) {
     await Promise.race([open.catch(() => {}), sleep(1000)]);
     if (isDone()) return;
-    const r = await clickImportOk(layout);
+    const r = await clickImportOk();
     debug(`import box: ${r}`);
     if (r === "clicked") { say("Clicked OK on the import options box."); return; }
     if (r === "no-permission") {
       cannotClick("accessibility-permission");
-      return;
-    }
-    if (r === "layout-unavailable") {
-      cannotClick(r);
       return;
     }
     misses += 1;
@@ -1009,19 +969,13 @@ async function pressImportOk(open, isDone, cannotClick, layout) {
 const CANNOT_CLICK_SAY = {
   "accessibility-permission": "I can't click in Sibelius for you yet. To let me do it next time, open System Settings > Privacy & Security > Accessibility and switch on the app I run in.",
   "box-not-found": "I can't find Sibelius' import box to click it.",
-  "layout-unavailable": "I can't confirm the layout settings in Sibelius' import box.",
   "not-macos": "Clicking for you only works on macOS.",
 };
 
-export function importWaitingEvent(file, layout) {
-  const action = layout === "house-style" ? "untick" : "tick";
-  return { event: "waiting", for: "import-ok", file, say: `Sibelius is showing its MusicXML import options for "${path.basename(file)}". Please ${action} both "${LAYOUT_BOXES[0]}" and "${LAYOUT_BOXES[1]}", then click OK.` };
-}
-
-async function importFile(sess, file, mode, layout) {
+async function importFile(sess, file, mode) {
   const label = path.basename(file);
   say(`Importing ${label} into Sibelius...`);
-  const waiting = importWaitingEvent(file, layout);
+  const waiting = { event: "waiting", for: "import-ok", file, say: `Sibelius is showing its MusicXML import options for "${label}". Please click OK.` };
   // agent-clicks could not click: one unmistakable event with a sentence to pass on, then the usual wait.
   const cannotClick = (reason) => {
     emit({ event: "agent-cannot-click", reason, file, say: `${CANNOT_CLICK_SAY[reason]} ${waiting.say}` });
@@ -1030,7 +984,7 @@ async function importFile(sess, file, mode, layout) {
   const open = sess.plugin("OpenFile", [path.resolve(file)], 900000);
   let done = false;
   open.then(() => (done = true), () => (done = true));
-  if (mode === "agent-clicks" && process.platform === "darwin") await pressImportOk(open, () => done, cannotClick, layout);
+  if (mode === "agent-clicks" && process.platform === "darwin") await pressImportOk(open, () => done, cannotClick);
   else if (mode === "agent-clicks") cannotClick("not-macos");
   else emit(waiting);
   const ok = await open;
@@ -1054,9 +1008,9 @@ function importSummary(c) {
   return { xmlNotes: c.xmlNotes, sibeliusNotes: c.sibeliusNotes, lost: c.lost, gained: c.gained, movedBetweenStaves: c.movedBetweenStaves ?? 0, barLengthWithinTupletRounding: c.barLengthWithinTupletRounding ?? 0, barsThatLookWrong: cellCount(c.problems), structure: c.structure };
 }
 
-async function importAndRead(sess, file, mode, layout, timings) {
+async function importAndRead(sess, file, mode, timings) {
   const t0 = Date.now();
-  await importFile(sess, file, mode, layout);
+  await importFile(sess, file, mode);
   const t1 = Date.now();
   const read = await readScore(sess);
   timings[path.basename(file)] = { importSeconds: (t1 - t0) / 1000, readSeconds: (Date.now() - t1) / 1000 };
@@ -1097,14 +1051,14 @@ async function check(opts) {
     const ping = await sess.plugin("Ping");
     if (compareVersions(String(ping.plugin), PLUGIN_VERSION) < 0) throw new Fail("plugin-outdated", `Sibelius has plug-in version ${ping.plugin}, this check needs ${PLUGIN_VERSION} or newer.`, "Run scripts/plugin/install.mjs, then quit and reopen Sibelius.");
     const timings = {};
-    const report = { sibelius: { ...install, programVersion: ping.programVersion }, importDialog: mode, importLayout: opts.importLayout, timings };
+    const report = { sibelius: { ...install, programVersion: ping.programVersion }, importDialog: mode, timings };
     if (opts.original) {
-      const o = await importAndRead(sess, opts.original, mode, opts.importLayout, timings);
+      const o = await importAndRead(sess, opts.original, mode, timings);
       const c = compare(xmlOrig, o.info, o.rows, o.barLengths);
       report.original = { file: path.resolve(opts.original), ...importSummary(c), problems: c.problems, sibeliusEvidence: c.evidence };
       if (!(await sess.plugin("CloseScore", [o.info.staffCount, o.info.title ?? ""]))) say("Left the original open in Sibelius (the active window changed).");
     }
-    const f = await importAndRead(sess, opts.fixed, mode, opts.importLayout, timings);
+    const f = await importAndRead(sess, opts.fixed, mode, timings);
     const c = compare(xmlFixed, f.info, f.rows, f.barLengths);
     const vsOrig = compareToOriginal(xmlOrig, c.cells, f.barLengths.length);
     const unplaced = [];
@@ -1160,8 +1114,8 @@ async function check(opts) {
 
 // ---------------------------------------------------------------- CLI
 
-export function parseArgs(argv) {
-  const o = { port: Number(process.env.SIBELIUS_CONNECT_PORT || 1898), importLayout: "file" };
+function parseArgs(argv) {
+  const o = { port: Number(process.env.SIBELIUS_CONNECT_PORT || 1898) };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const val = () => { if (i + 1 >= argv.length) throw new Fail("usage", `${a} needs a value`); return argv[++i]; };
@@ -1174,9 +1128,6 @@ export function parseArgs(argv) {
     else if (a === "--import-dialog") {
       o.importDialog = val();
       if (!["user-clicks", "agent-clicks"].includes(o.importDialog)) throw new Fail("usage", "--import-dialog is user-clicks or agent-clicks");
-    } else if (a === "--import-layout") {
-      o.importLayout = val();
-      if (!["file", "house-style"].includes(o.importLayout)) throw new Fail("usage", "--import-layout is file or house-style");
     } else if (!o.cmd) o.cmd = a;
     else throw new Fail("usage", `unexpected argument ${a}`);
   }
@@ -1188,7 +1139,7 @@ async function main() {
     const opts = parseArgs(process.argv.slice(2));
     if (opts.cmd === "status") emit(await status(opts.port));
     else if (opts.cmd === "check") emit(await check(opts));
-    else throw new Fail("usage", "usage: connect.mjs status | check --fixed FILE [--original FILE] [--changes FILE] [--out DIR] [--import-dialog user-clicks|agent-clicks] [--import-layout file|house-style] [--close]");
+    else throw new Fail("usage", "usage: connect.mjs status | check --fixed FILE [--original FILE] [--changes FILE] [--out DIR] [--import-dialog user-clicks|agent-clicks] [--close]");
     process.exit(0);
   } catch (e) {
     emit({ event: "error", code: e.code || "unexpected", message: e.message, hint: e.hint || null });

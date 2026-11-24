@@ -34,8 +34,8 @@ This is step 3 of SKILL.md. `scripts/connect.mjs` opens the user's original and 
    | `dismissed-sibelius-box` | agent-clicks only: the script clicked OK on a box it knows is harmless (`box`) |
    | `waiting`, `for: "sibelius-busy"` | Sibelius is busy and no box can be seen (Accessibility not allowed, or not macOS): ask the user to close any open box |
    | `connected` | approved |
-   | `waiting`, `for: "import-ok"` | pass on `say`: it names both layout boxes, their requested state and when to click OK |
-   | `agent-cannot-click` | `reason` is `accessibility-permission`, `layout-unavailable` (cannot confirm the requested settings), `box-not-found` (nothing found within 30 s; it keeps trying) or `not-macos`. Relay the instructions; a `waiting` / `import-ok` line follows |
+   | `waiting`, `for: "import-ok"` | the import options box is up. Ask the user to click OK |
+   | `agent-cannot-click` | `reason` is `accessibility-permission`, `box-not-found` (the script keeps trying after 30 seconds) or `not-macos`. Ask the user to click OK. A `waiting` / `import-ok` line follows |
    | `done` | finished; exit code 0 |
    | `error` | `code`, `message`, `hint`; exit code 1 |
 
@@ -54,10 +54,8 @@ This is the user's decision. Ask them to click Yes; never click it for them, in 
 
 Opening MusicXML makes Sibelius show "Open MusicXML File" with import options. The plug-in call that opens the file does not return until the box is answered, and `Sibelius.Open(path, True)` (the "quiet" flag) does not suppress it.
 
-`check --import-layout file|house-style` applies to both the original and fixed imports. `file` (the default) checks **Use page and staff size from MusicXML file** and **Use layout and formatting from MusicXML file**. `house-style` clears both boxes to use Sibelius' layout settings. In a live check of Score A on 26.11, both modes gave the same note counts, comments and visible first-page layout, including the overlapping title, names and staves. The option leaves the MusicXML and the comparison rules unchanged.
-
-- **user-clicks**: relay the `waiting` / `import-ok` instructions for each file. The user sets the two boxes and presses OK; the script waits up to 15 minutes per file.
-- **agent-clicks** (macOS only): the script searches the “Open MusicXML File” window, including nested groups, for the two named Accessibility buttons or checkboxes. Sibelius 26.11 includes an ampersand for the keyboard shortcut in each Accessibility name. The script clicks only controls in the wrong state and checks their values before pressing OK. If either setting cannot be confirmed, it leaves OK to the user. If the window cannot be found (for example, its title is translated), the script also asks the user after 30 seconds. It may press Shift to wake a screen saver while waiting.
+- In **user-clicks** mode, relay the `waiting` / `import-ok` prompt for each file. The script waits up to 15 minutes per file for the user to press OK.
+- In **agent-clicks** mode on macOS, the script looks for the OK button in the “Open MusicXML File” window and its nested groups. After 30 seconds without finding the button, it asks the user to click OK and keeps looking. It may press Shift to wake a screen saver while waiting.
   - The first time, macOS asks: "*<your assistant's app>* would like to control this computer using accessibility features" with Open System Settings / Deny. The user grants it in System Settings > Privacy & Security > Accessibility by switching on the app your assistant runs in (Terminal, iTerm, the Claude or Codex app...). macOS may also ask to let it control "System Events" (Automation). Until then osascript fails with error -25211 ("not allowed assistive access"); the script emits `agent-cannot-click` with reason `accessibility-permission` and waits for the user to click OK instead.
   - On Windows the script always asks the user.
 

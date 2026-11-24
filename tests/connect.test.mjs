@@ -9,29 +9,7 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const SCRIPTS = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "plugins", "sibelius-import-doctor", "skills", "sibelius-import-doctor", "scripts");
-const { parseArgs, importWaitingEvent, parseXml, loadScore, analyseScore, compare, compareToOriginal, loadChanges, locate, buildComments, doctorItems, LEVEL_COLOR, parseBoxes, openBoxSay, HARMLESS_BOXES } = await import(path.join(SCRIPTS, "connect.mjs"));
-
-test("check accepts file (default) or house-style for the import layout", () => {
-  assert.equal(parseArgs(["check"]).importLayout, "file");
-  for (const layout of ["file", "house-style"]) {
-    const opts = parseArgs(["check", "--import-layout", layout, "--import-dialog", "agent-clicks"]);
-    assert.equal(opts.importLayout, layout);
-    assert.equal(opts.importDialog, "agent-clicks");
-  }
-  for (const args of [[], ["auto"]]) {
-    assert.throws(() => parseArgs(["check", "--import-layout", ...args]), { code: "usage", message: /--import-layout/ });
-  }
-});
-
-test("the import waiting event names both boxes and their requested state before OK", () => {
-  const file = path.join("scores", "Score A.musicxml");
-  for (const [layout, action] of [["file", "tick"], ["house-style", "untick"]]) {
-    assert.deepEqual(importWaitingEvent(file, layout), {
-      event: "waiting", for: "import-ok", file,
-      say: `Sibelius is showing its MusicXML import options for "Score A.musicxml". Please ${action} both "Use page and staff size from MusicXML file" and "Use layout and formatting from MusicXML file", then click OK.`,
-    });
-  }
-});
+const { parseXml, loadScore, analyseScore, compare, compareToOriginal, loadChanges, locate, buildComments, doctorItems, LEVEL_COLOR, parseBoxes, openBoxSay, HARMLESS_BOXES } = await import(path.join(SCRIPTS, "connect.mjs"));
 
 const SCORE = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
