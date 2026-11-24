@@ -844,7 +844,7 @@ const CLICK_OK_SCRIPT = `on run argv
               set controlName to item labelIndex of argv
               set matched to false
               repeat with elem in controls
-                if (role of elem is in {"AXCheckBox", "AXButton"}) and (name of elem is controlName) then
+                if role of elem is in {"AXCheckBox", "AXButton"} and my matchesLabel(name of elem, controlName) then
                   try
                     set currentValue to value of attribute "AXValue" of elem as integer
                     if currentValue is not in {0, 1} then return "layout-unavailable"
@@ -884,7 +884,19 @@ const CLICK_OK_SCRIPT = `on run argv
       return "no-window"
     end tell
   end tell
-end run`;
+end run
+
+-- Sibelius exposes keyboard mnemonics as ampersands in Accessibility names.
+on matchesLabel(label, expectedLabel)
+  if label is missing value then return false
+  set savedDelimiters to AppleScript's text item delimiters
+  set AppleScript's text item delimiters to "&"
+  set labelParts to text items of label
+  set AppleScript's text item delimiters to ""
+  set plainLabel to labelParts as text
+  set AppleScript's text item delimiters to savedDelimiters
+  return plainLabel is expectedLabel
+end matchesLabel`;
 
 // Shift (key code 56) wakes a screen saver, which otherwise hides Sibelius' windows from Accessibility.
 const WAKE_SCRIPT = 'tell application "System Events" to key code 56';
